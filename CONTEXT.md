@@ -27,4 +27,5 @@ A Bookmark that belongs to no Collection.
 
 - A **User** has many **Collections** and many **Bookmarks**
 - A **Bookmark** belongs to zero or one **Collection**; the Collection and the Bookmark always have the same **Owner**
+- Deleting a **Collection** makes its Bookmarks **Uncategorised Bookmarks**; it never deletes a Bookmark
 - Collections are never shared: there is no second User with access to anything

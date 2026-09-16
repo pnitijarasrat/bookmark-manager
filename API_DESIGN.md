@@ -60,7 +60,7 @@ Timestamps are set only by the server, returned as ISO 8601 in UTC, and stored w
 | GET | `/collections/:id` | `200` with a Collection | 401, 404 |
 | PUT | `/collections/:id` | `200` with a Collection | 400, 401, 404, 409, 415, 422 |
 | PATCH | `/collections/:id` | `200` with a Collection | 400, 401, 404, 409, 415, 422 |
-| DELETE | `/collections/:id` | `204`. What happens to its Bookmarks is pending [#9](#3-the-collectionbookmark-relation). | 401, 404 |
+| DELETE | `/collections/:id` | `204`. Its Bookmarks become Uncategorised (see [§3](#3-the-collectionbookmark-relation)). | 401, 404 |
 | GET | `/collections/:id/bookmarks` | `200` with a list page of Bookmarks | 400, 401, 404 |
 | GET | `/bookmarks` | `200` with a list page | 400, 401, 404 |
 | POST | `/bookmarks` | `201` with a Bookmark and a `Location` header | 400, 401, 404, 415, 422 |
@@ -96,13 +96,9 @@ A path `:id` that isn't a UUID gets a `404` before any query runs. A second DELE
 - **Same Owner:** a Bookmark and its Collection always have the same Owner. Two things guarantee it:
   1. Before a write with a `collectionId`, the repository looks up the Collection, scoped to the Owner, and answers `404` if it isn't found.
   2. A composite foreign key, `Bookmark(collection_id, owner_id) → Collection(id, owner_id)`, backed by the unique key on `Collection(id, owner_id)`. If the Collection is deleted between the check and the write, the foreign key fails (Prisma `P2003`), and the repository maps that to the same `404`.
-- **On delete:** what happens to a Collection's Bookmarks when it's deleted is **pending [#9](https://github.com/pnitijarasrat/bookmark-manager/issues/9)**. The options are:
-  - setting their `collectionId` to null
-  - deleting them with the Collection
-  - refusing to delete a non-empty Collection
-  - letting the client choose
-
-  If #9 chooses set-null, the migration must be hand-edited to `ON DELETE SET NULL (collection_id)` (Postgres 15+), so that `owner_id` isn't nulled as well.
+- **On delete:** deleting a Collection makes its Bookmarks Uncategorised. It never deletes a Bookmark, and there's no soft delete or undo ([DECISION.md](DECISION.md#deleting-a-collection-keeps-its-bookmarks)).
+  - The composite foreign key is `ON DELETE SET NULL (collection_id)` (Postgres 15+), so `owner_id` is never nulled. Prisma's schema can't express this, so the migration is hand-edited, and a migration test protects it.
+  - The repository runs one `delete({ where: { id_ownerId: { id, ownerId } } })`. The database moves the Bookmarks in the same statement, so their `updatedAt` stays the same.
 
 ---
 

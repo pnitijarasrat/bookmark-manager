@@ -211,7 +211,7 @@ Decided in [#7](https://github.com/pnitijarasrat/bookmark-manager/issues/7). How
   - **The check** gives a clean, identical 404.
   - **The foreign key** keeps the rule true even if some code path skips the check.
 - **Rejected alternatives:** only the application check, or only the foreign key.
-- **Consequences:** if deleting a Collection sets its Bookmarks' `collectionId` to null ([#9](https://github.com/pnitijarasrat/bookmark-manager/issues/9)), a plain composite foreign key would null `owner_id` too. The migration must be hand-edited to `ON DELETE SET NULL (collection_id)` (Postgres 15+), which Prisma's schema can't express.
+- **Consequences:** deleting a Collection sets its Bookmarks' `collectionId` to null (see [Deleting a Collection keeps its Bookmarks](#deleting-a-collection-keeps-its-bookmarks)), and a plain composite foreign key would null `owner_id` too. The migration must be hand-edited to `ON DELETE SET NULL (collection_id)` (Postgres 15+), which Prisma's schema can't express.
 
 ### Clients can never set or see `ownerId`
 
@@ -325,7 +325,7 @@ Decided in [#12](https://github.com/pnitijarasrat/bookmark-manager/issues/12).
   - **Collection dialog:**
     - a rename form
     - a read-only list of the Collection's Bookmarks from `GET /collections/:id/bookmarks`, each linking to `/bookmarks/:id` (following one closes this dialog and opens that one)
-    - a Delete button, whose warning depends on [#9](https://github.com/pnitijarasrat/bookmark-manager/issues/9)
+    - a Delete button that always asks for confirmation, and says how many Bookmarks will be kept as Uncategorised (see [Deleting a Collection keeps its Bookmarks](#deleting-a-collection-keeps-its-bookmarks))
   - **Bookmark dialog:**
     - **Fields:** the edit form opens straight away.
     - **Collection picker:** a Select listing the User's Collections, with "None (Uncategorised)" as the first option.
@@ -398,7 +398,7 @@ Decided in [#8](https://github.com/pnitijarasrat/bookmark-manager/issues/8). The
   - **`ownerId`:** see [Clients can never set or see `ownerId`](#clients-can-never-set-or-see-ownerid).
   - **`bookmarkCount`:**
     - The Collections page can show counts.
-    - The delete-Collection warning ([#9](https://github.com/pnitijarasrat/bookmark-manager/issues/9)) can say how many Bookmarks are affected without another request.
+    - The delete-Collection warning can say how many Bookmarks are affected without another request (see [Deleting a Collection keeps its Bookmarks](#deleting-a-collection-keeps-its-bookmarks)).
     - It's one `_count` in the same Owner-scoped query.
   - **`notes`:** a nullable string has two empty states, `null` and `""`. That makes "clear the notes" in a PATCH ambiguous, and every reader would need to handle both.
 - **Rejected alternatives:**
@@ -554,3 +554,44 @@ Decided in [#8](https://github.com/pnitijarasrat/bookmark-manager/issues/8). The
   - **An unpaginated nested route.**
   - **Friendlier names in the SPA's URL.**
 - **Consequences:** the brief's "filter" requirement is covered by `collectionId` and `q` alone.
+
+### Deleting a Collection keeps its Bookmarks
+
+Decided in [#9](https://github.com/pnitijarasrat/bookmark-manager/issues/9).
+
+- **Decision:**
+  - **The Bookmarks:** deleting a Collection makes its Bookmarks Uncategorised (`collectionId: null`). It never deletes a Bookmark.
+  - **Where it happens:** in the database. The composite foreign key is hand-edited in the migration to `ON DELETE SET NULL (collection_id)` (Postgres 15+), so `owner_id` is never nulled. The repository runs a single `delete({ where: { id_ownerId: { id, ownerId } } })`, and Prisma's `P2025` becomes the standard 404.
+  - **Hard delete, no undo:** the row is removed. There's no `deletedAt` column and no undo.
+  - **The API:** `DELETE /collections/:id` answers `204` with no body. The only errors are `401` and `404`. A second DELETE of the same ID gets a `404`.
+  - **The SPA:** the Delete button in the Collection dialog always asks for confirmation, even for an empty Collection:
+    - **Title:** `Delete Collection "Reading"?`
+    - **Extra line, when `bookmarkCount` is above 0:** `Its 3 Bookmarks will be kept and become Uncategorised.`
+    - **Buttons:** Cancel and Delete (red).
+    - **After a delete:** the action redirects to `/collections`, which closes the dialog and reloads the list. There's no success Snackbar. A 404 goes to the error boundary, and any other failure shows a Snackbar (see [How errors are shown](#how-errors-are-shown)).
+- **Why:**
+  - **A Collection organises Bookmarks; it doesn't own them.** The data model already allows a Bookmark in no Collection, so Uncategorised is a normal state.
+  - **Deleting a Collection should never lose saved links.** The User may only want to reorganise.
+  - **Nothing is lost, so a confirmation is enough and no undo is needed.** The User can move the Bookmarks into another Collection afterwards.
+  - **The foreign key does the work in one atomic statement.** A Bookmark saved into the Collection at the same moment fails the foreign key (`P2003`), which is already mapped to a 404 (see [A Bookmark's Collection always has the same Owner](#a-bookmarks-collection-always-has-the-same-owner)).
+  - **The warning says "kept"** because the User's real worry is losing their links. The count comes from the loaded Collection, so no extra request is needed.
+- **Rejected alternatives:**
+  - **Cascade:** one click could silently destroy many links, and they can't be restored.
+  - **Refusing a non-empty Collection:** the User would have to move every Bookmark by hand first, one dialog at a time, because the Collection dialog's Bookmark list is read-only.
+  - **Letting the client choose** (for example `?bookmarks=keep|delete`): it doubles the API surface and the isolation tests for a choice the brief doesn't ask for.
+  - **Soft delete with an undo Snackbar:** every Owner-scoped query would need a `deletedAt` filter, which is one more way to leak data. It would also need a partial unique index for names, and a record of which Bookmarks to put back.
+  - **Undo by re-creating the Collection:** it would get a new ID and `createdAt`, and the SPA would have to re-assign every Bookmark.
+  - **Set-null in application code** (`updateMany`, then `delete`, in a transaction): two statements, with a race between them, where one foreign-key rule does the same job atomically.
+  - **No confirmation for an empty Collection,** and **generic warning text without a count.**
+- **Consequences:**
+  - **A hand-edited migration:** Prisma's schema can't express `SET NULL (collection_id)`, so `prisma migrate dev` may report drift. A migration test deletes a Collection and checks that its Bookmarks keep their `owner_id` and have `collection_id = null`.
+  - **`updatedAt` stays the same** on the moved Bookmarks, because Prisma's `@updatedAt` only changes when Prisma writes the row. Nothing sorts or filters by `updatedAt`, and the User didn't edit those Bookmarks.
+  - **The count in the warning can be slightly out of date** if another tab changed the Collection. No data is lost either way.
+  - **Stale references in other tabs are already covered:** a Bookmark dialog that still lists the deleted Collection gets "Collection not found" on save, and a `/bookmarks?collectionId=<deleted>` URL shows the Not-found page.
+  - **The Bookmark delete confirmation stays,** because there's still no undo.
+  - **Tests for the isolation proof** ([#10](https://github.com/pnitijarasrat/bookmark-manager/issues/10)):
+    1. Owner A deletes their own non-empty Collection: `204`, and its Bookmarks still exist, still belong to A, have `collectionId: null` and appear under `?collectionId=none`.
+    2. Owner B deletes A's Collection: the constant 404, and A's Collection and Bookmarks are unchanged.
+    3. Deleting A's Collection leaves B's Collections and Bookmarks unchanged.
+    4. A second DELETE of the same ID gets a 404, and so does a non-UUID ID.
+    5. The migration test above.
