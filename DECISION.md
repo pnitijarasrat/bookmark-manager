@@ -139,6 +139,103 @@ Token expiry and 401 handling in the SPA is decided under [Frontend](#an-expired
 
 ---
 
+## Isolation
+
+Decided in [#7](https://github.com/pnitijarasrat/bookmark-manager/issues/7). How isolation is proven is decided in [#10](https://github.com/pnitijarasrat/bookmark-manager/issues/10).
+
+### Another Owner's ID is always a 404
+
+- **Decision:**
+  - **The rule:** an ID that belongs to another Owner is treated exactly like one that doesn't exist, wherever it appears. The answer is always 404, never 403. This covers:
+    - a path ID in GET, PUT, PATCH or DELETE on `/bookmarks/:id`, `/collections/:id` and `/collections/:id/bookmarks`
+    - a `collectionId` used as a list filter. A filter naming a Collection you don't own gets a 404, not an empty list.
+    - a `collectionId` in a Bookmark's create, PUT or PATCH body
+  - **Malformed IDs:** a path ID that isn't a UUID also gets a 404, from a pipe, before any query runs.
+  - **The body:** every 404 is the same constant `application/problem+json` body, `{"type":"about:blank","title":"Not Found","status":404}`. It has no `detail` and no `instance`, and never repeats the path or the ID. One exception filter produces it for every not-found case, including Nest's 404 for unknown routes.
+- **Why:**
+  - **A 403 would confirm that the resource exists,** which breaks the promise that a User can't learn of another Owner's data.
+  - **One rule with no exceptions** is simple to state, build and test.
+  - **A constant body** can be checked byte for byte. The archived attempt repeated the path in `instance`, which would have made its "identical 404" test fail.
+  - **Rejecting malformed IDs early** stops Postgres from throwing on the cast to `uuid`.
+- **Rejected alternatives:**
+  - **403 for resources that exist but belong to someone else.**
+  - **An empty `200` list for a filter on a Collection you don't own.**
+  - **A 422 on the `collectionId` field** for a Bookmark body naming a Collection you don't own.
+  - **A 400 from `ParseUUIDPipe`** for malformed IDs.
+- **Consequences:**
+  - The SPA maps a 404 caused by `collectionId` to a field error (see [How errors are shown](#how-errors-are-shown)).
+  - The format of other errors (400, 422, 500) follows [#8](https://github.com/pnitijarasrat/bookmark-manager/issues/8).
+
+### The Owner scope lives in a repository layer
+
+- **Decision:**
+  - **Repositories:** every repository method takes the Owner as its first argument, `method(ownerId, …)`, and every query filters on it.
+  - **How the Owner gets there:** the guard puts `sub` on the request. Controllers read it with an `@Owner()` parameter decorator and pass it on explicitly through services.
+  - **Reads:** each read is one query on `id AND owner_id`.
+  - **Writes:** Collection and Bookmark both have `@@unique([id, ownerId])`. Single-row updates and deletes use `where: { id_ownerId: { id, ownerId } }`, and the repository maps Prisma's `P2025` (record not found) to the standard 404.
+  - **The boundary:**
+    - An ESLint `no-restricted-imports` rule, run in CI, lets only `*.repository.ts` files import `PrismaService` or `@prisma/client`.
+    - `PrismaModule` is imported only by the repository modules.
+- **Why:**
+  - **The Owner is visible at every call,** and tests can pass it as a plain argument.
+  - **The lint rule makes the boundary mechanical,** not a matter of review, and gives [#10](https://github.com/pnitijarasrat/bookmark-manager/issues/10) something structural to point to.
+  - **A composite unique `where`** makes each write one atomic, Owner-scoped query that returns the updated row, with no gap between checking and writing.
+- **Rejected alternatives:**
+  - **Postgres row-level security,** alone or alongside the repository. It's the only option where a forgotten filter still returns nothing. But every request would need a transaction that sets `app.owner_id`, the app would need a separate restricted database role (plus `FORCE ROW LEVEL SECURITY`), and the RLS setup would need its own tests. We chose to keep enforcement in one readable layer.
+  - **A Prisma client extension that injects `ownerId`.** Query extensions don't reach nested writes or `$queryRaw`, so it leaves gaps and hides the scope.
+  - **A request-scoped repository that reads the Owner from the request.** It hides the argument and makes every provider in the chain request-scoped.
+  - **`updateMany` or `deleteMany` with a count check.** `updateMany` can't return the row, so this needs a second read.
+  - **Code review, or Nest module structure alone,** as the boundary.
+- **Consequences:**
+  - The guarantee depends on every repository query including `ownerId`. The lint rule keeps Prisma inside the repositories, and [#10](https://github.com/pnitijarasrat/bookmark-manager/issues/10) proves the repositories themselves.
+  - The seed script uses Prisma outside a repository, so it needs a lint exemption.
+
+### IDs are database-generated UUIDv4
+
+- **Decision:** every ID is a UUIDv4 in a native `uuid` column, generated with `@default(dbgenerated("gen_random_uuid()"))`.
+- **Why:** random IDs reveal no counts, can't be enumerated, and carry no creation time.
+- **Rejected alternatives:**
+  - **Sequential integers.** They leak how many rows exist and invite enumeration.
+  - **UUIDv7.** Its index benefit doesn't matter at this scale, and it contains the creation time.
+  - **cuid2.** It needs an extra library and has no native Postgres type.
+- **Consequences:** none.
+
+### A Bookmark's Collection always has the same Owner
+
+- **Decision:**
+  - **The check:** before a Bookmark write with a `collectionId`, the repository looks the Collection up, scoped to the Owner, and answers 404 if it isn't found.
+  - **The constraint:** a composite foreign key, `Bookmark(collection_id, owner_id) → Collection(id, owner_id)`, backed by the unique key on `Collection(id, owner_id)`.
+  - **The race:** if the Collection is deleted between the check and the write, the foreign key fails with `P2003`, and the repository maps that to the same 404.
+  - **Other database errors:** any unmapped Prisma error becomes a generic 500 whose body contains no database details.
+- **Why:**
+  - **The check** gives a clean, identical 404.
+  - **The foreign key** keeps the rule true even if some code path skips the check.
+- **Rejected alternatives:** only the application check, or only the foreign key.
+- **Consequences:** if deleting a Collection sets its Bookmarks' `collectionId` to null ([#9](https://github.com/pnitijarasrat/bookmark-manager/issues/9)), a plain composite foreign key would null `owner_id` too. The migration must be hand-edited to `ON DELETE SET NULL (collection_id)` (Postgres 15+), which Prisma's schema can't express.
+
+### Clients can never set or see `ownerId`
+
+- **Decision:**
+  - **Requests:** the global `ValidationPipe` runs with `whitelist: true` and `forbidNonWhitelisted: true`. No request DTO has an `ownerId` field, so a body containing one gets a 400.
+  - **Responses:** `ownerId` is left out of all responses.
+- **Why:**
+  - **A 400 tells a client** that thinks it can set the Owner that it can't.
+  - **In a response, `ownerId`** would always be the caller's own `sub`, so it tells them nothing. Leaving it out keeps `sub` values out of the API's responses.
+- **Rejected alternatives:** silently stripping unknown fields.
+- **Consequences:** any unknown field gets a 400, not only `ownerId`.
+
+### Side channels
+
+- **Decision:**
+  - **Error bodies:** 404 bodies are constant (see [above](#another-owners-id-is-always-a-404)).
+  - **Timing:** a lookup is one query on `id AND owner_id`, so a resource that doesn't exist and one that belongs to someone else take the same code path. There's no fetch-then-compare.
+  - **Uniqueness:** any unique constraint on user content is scoped per Owner, so a 409 can never reveal another Owner's data.
+- **Why:** these are the ways a User could otherwise tell "doesn't exist" apart from "belongs to someone else".
+- **Rejected alternatives:** artificial delays to even out timing. Both cases already run the same single query.
+- **Consequences:** logging and rate limiting are decided under HTTP hardening.
+
+---
+
 ## Frontend
 
 Decided in [#12](https://github.com/pnitijarasrat/bookmark-manager/issues/12).
@@ -201,7 +298,7 @@ Decided in [#12](https://github.com/pnitijarasrat/bookmark-manager/issues/12).
 - **Decision:**
   - **404:** `apiFetch` throws a 404 response. The route error boundary shows a "Not found" page with a link back to the list.
   - **5xx or network failure:** an error boundary with "Try again", which reloads the data.
-  - **Failed actions:** a 422 is returned as action data and shown next to the form fields. Any other failure shows a Snackbar.
+  - **Failed actions:** a 422 is returned as action data and shown next to the form fields. A 404 on a Bookmark submission that included a `collectionId` shows "Collection not found" on the Collection picker, because the API answers 404 for a Collection that doesn't exist or isn't yours (see [Isolation](#another-owners-id-is-always-a-404)). A 404 on the Bookmark's own ID still goes to the error boundary. Any other failure shows a Snackbar.
 - **Why:** the API answers 404 for another Owner's resource too, so the SPA shows the same page for both. That page reveals nothing about whether the resource exists.
 - **Rejected alternatives:** separate "forbidden" and "not found" messages.
 - **Consequences:** the SPA can't tell a mistyped ID from someone else's resource, which is intended.
