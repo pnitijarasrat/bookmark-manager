@@ -8,6 +8,7 @@ Answers [First real sign-in against the tenant](https://github.com/pnitijarasrat
 
 - **Sign-in goes through Universal Login** with existing database-connection Auth0 users. Google sign-in (Auth0 developer keys) was dropped, so this project doesn't rely on it.
 - **No `offline_access`.** The scope stays at `openid profile email`, fixed by the brief (see [#1](https://github.com/pnitijarasrat/bookmark-manager/issues/1)), so no refresh tokens are requested. Question 3 (refresh-token issuance and rotation) was therefore not tested.
+- **No User table in the database.** A User exists only as the Auth0 `sub` in the verified access token. Collections and Bookmarks store that `sub` as their Owner, so no row is ever created on first sign-in. `/me` is built from the token and profile data fetched at request time, not stored. Where that profile data comes from (`/userinfo` called by the API, or the SPA's ID token) is still open in [User identity and /me](https://github.com/pnitijarasrat/bookmark-manager/issues/6).
 
 ## 1. Access token (audience `https://bbl-candidate-test-api`)
 
@@ -30,7 +31,7 @@ Answers [First real sign-in against the tenant](https://github.com/pnitijarasrat
 
 - The API must verify RS256 against the JWKS, and check `iss` with its trailing slash.
 - `aud` is an array, so the API should check that it **contains** `https://bbl-candidate-test-api` rather than comparing it for equality (`jose` does this).
-- The API only learns `sub` from the token. Profile data for `/me` must come from elsewhere (see question 2).
+- The API only learns `sub` from the token, and with no User table that `sub` is the whole Owner identity. Profile data for `/me` must come from elsewhere (see question 2).
 
 ## 2. `/userinfo` with the access token
 
@@ -67,7 +68,7 @@ Our only allowed callback is `http://localhost:3000/callback`. With `prompt=none
 
 ## 5. Distinct `sub`s for different Users
 
-- **Format:** database-connection users have `sub` = `auth0|<24 lowercase hex chars>`.
+- **Format:** database-connection users have `sub` = `auth0|<24 lowercase hex chars>`. With no User table, this string is what Collections and Bookmarks store as their Owner.
 - **Distinctness: not tested.** Both sign-ins used the same Auth0 user (the same `sub` both times). Confirming that two Auth0 users yield two `sub`s needs a second existing database-connection user, which is relevant to [Seed data for two Users](https://github.com/pnitijarasrat/bookmark-manager/issues/11). Sign-up is disabled, so a second Auth0 user can't be created from here.
 
 ## Sources
