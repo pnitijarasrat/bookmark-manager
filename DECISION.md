@@ -164,7 +164,7 @@ Decided in [#7](https://github.com/pnitijarasrat/bookmark-manager/issues/7). How
   - **A 400 from `ParseUUIDPipe`** for malformed IDs.
 - **Consequences:**
   - The SPA maps a 404 caused by `collectionId` to a field error (see [How errors are shown](#how-errors-are-shown)).
-  - The format of other errors (400, 422, 500) follows [#8](https://github.com/pnitijarasrat/bookmark-manager/issues/8).
+  - The format of other errors (400, 415, 409, 422, 500) is decided under [API contract](#errors-are-problemjson-with-400-for-malformed-requests-and-422-for-invalid-values).
 
 ### The Owner scope lives in a repository layer
 
@@ -342,7 +342,7 @@ Decided in [#12](https://github.com/pnitijarasrat/bookmark-manager/issues/12).
   - **An editable Bookmark list inside the Collection dialog.**
   - **A read-only Bookmark view with a separate Edit mode.**
   - **An undo Snackbar instead of a delete confirmation.**
-- **Consequences:** how the "None" choice is sent (PUT or PATCH with `collectionId: null`) follows [#8](https://github.com/pnitijarasrat/bookmark-manager/issues/8).
+- **Consequences:** the dialogs save with PUT, so "None" is sent as `collectionId: null` (see [API contract](#put-replaces-patch-updates-and-the-spa-uses-put)).
 
 ### The app shell
 
@@ -376,4 +376,181 @@ Decided in [#12](https://github.com/pnitijarasrat/bookmark-manager/issues/12).
   - **A filtered view can be linked to** and survives back and forward.
   - **Closing a dialog** goes back to the same filtered list.
 - **Rejected alternatives:** filter state kept in React state.
-- **Consequences:** the filter options, param names and pagination UI follow [#8](https://github.com/pnitijarasrat/bookmark-manager/issues/8).
+- **Consequences:** the filter options, param names and pagination UI are decided under [API contract](#lists-use-cursor-pagination-with-a-fixed-sort).
+
+---
+
+## API contract
+
+Decided in [#8](https://github.com/pnitijarasrat/bookmark-manager/issues/8). The contract itself, with every route, field and status code, is in [API_DESIGN.md](API_DESIGN.md). This section records why it looks that way.
+
+### Changes from the brief's suggested shapes
+
+- **Decision:** the brief suggests:
+  - **Collection:** `id, name, ownerId, createdAt, updatedAt`
+  - **Bookmark:** `id, url, title, notes?, collectionId?, ownerId, createdAt, updatedAt`
+
+  We keep these shapes, with three changes:
+  - `ownerId` is stored but left out of every response, and a request body containing it gets a 400.
+  - A Collection response adds `bookmarkCount`, the number of the Owner's Bookmarks in that Collection.
+  - `notes` is optional in a request, but it's always a string in the database and in responses. It defaults to `""` and is never `null`.
+- **Why:**
+  - **`ownerId`:** see [Clients can never set or see `ownerId`](#clients-can-never-set-or-see-ownerid).
+  - **`bookmarkCount`:**
+    - The Collections page can show counts.
+    - The delete-Collection warning ([#9](https://github.com/pnitijarasrat/bookmark-manager/issues/9)) can say how many Bookmarks are affected without another request.
+    - It's one `_count` in the same Owner-scoped query.
+  - **`notes`:** a nullable string has two empty states, `null` and `""`. That makes "clear the notes" in a PATCH ambiguous, and every reader would need to handle both.
+- **Rejected alternatives:**
+  - **Keeping `ownerId` in responses.**
+  - **`notes: string | null`.**
+  - **Embedding `collection: {id, name}` in a Bookmark.** The `/bookmarks` loader already loads the Collection list, and embedding it would make the read shape differ from the write shape.
+- **Consequences:** `collectionId` stays optional in the sense the brief means: it's `null` for an Uncategorised Bookmark, and a create body can leave it out.
+
+### Field rules
+
+- **Decision:**
+  - **`url`:**
+    - It's trimmed, then parsed with the WHATWG `URL` parser.
+    - Only `http:` and `https:` are accepted, it must have a host, and it can be at most 2048 characters.
+    - It's stored as entered, with no normalisation.
+    - The same URL can be saved more than once by the same Owner.
+  - **`title`:** required, trimmed, 1–200 characters.
+  - **`notes`:** at most 2000 characters, stored exactly as sent, and `""` by default.
+  - **`name`:** required, trimmed, 1–100 characters, and unique per Owner regardless of case. A clash gets a 409.
+  - **`collectionId`:** a UUID or `null`.
+  - **`createdAt` and `updatedAt`:** always set by the server, and returned as ISO 8601 in UTC. A client that sends them gets a 400.
+- **Why:**
+  - **Allowing only http(s)** keeps `javascript:` and `data:` URLs out of the "Open link" button.
+  - **2048 characters** is the usual practical limit for URLs.
+  - **Storing the URL as entered** keeps what the User typed.
+  - **Allowing duplicates:**
+    - A read-later list can reasonably hold the same link twice, for example with different notes.
+    - An exact-match check is easy to get around, and normalising URLs isn't asked for.
+  - **A required title:** we don't fetch page titles (out of scope), so the list always has something readable to show, and the field has a single state.
+  - **Case-insensitive names:** "Reading" and "reading" side by side in the Collection picker would only confuse the User. The uniqueness is per Owner, so a 409 reveals nothing about anyone else (see [Side channels](#side-channels)).
+- **Rejected alternatives:**
+  - **Any string as a URL.**
+  - **Normalising URLs,** such as lowercasing the host or stripping the fragment.
+  - **Rejecting duplicate URLs with a 409.**
+  - **An optional title,** or copying the URL into it.
+  - **Names that aren't unique,** or unique only with matching case.
+  - **Leaving timestamps out of responses.**
+- **Consequences:**
+  - **Name uniqueness** needs a unique index on `(owner_id, lower(name))`. Prisma's schema can't express that, so it goes in the hand-edited migration, next to the composite foreign key.
+  - **A whitespace-only `title` or `name`** gets a 422, because trimming happens before validation.
+
+### PUT replaces, PATCH updates, and the SPA uses PUT
+
+- **Decision:**
+  - **POST:** creates a resource.
+    - **Bookmark:** `url` and `title` are required. `notes` defaults to `""`, and `collectionId` defaults to `null`.
+    - **Collection:** `name` is required.
+  - **PUT:** a full replace, so every writable field is required. For a Bookmark that means `url`, `title`, `notes` and `collectionId`, which must be sent explicitly, even as `null`. PUT never creates, so a missing ID gets a 404.
+  - **PATCH:** a partial update with a plain `application/json` body.
+    - An absent field stays unchanged.
+    - `collectionId: null` makes the Bookmark Uncategorised.
+    - `null` for any other field gets a 422.
+    - `{}` is a 200 that changes nothing.
+  - **Collections:** the only writable field is `name`, so PUT and PATCH behave the same.
+  - **The SPA:** both edit dialogs save with PUT, and the Collection picker's "None (Uncategorised)" is sent as `collectionId: null`.
+- **Why:**
+  - **PATCH keeps "absent" and `null` apart,** which is all that moving a Bookmark to Uncategorised needs.
+  - **The dialogs always hold the whole resource,** so PUT matches what they send and makes "None" explicit.
+  - **PATCH stays in the API** because the brief asks for it.
+- **Rejected alternatives:**
+  - **JSON Merge Patch (RFC 7396)** or **JSON Patch (RFC 6902)** for PATCH.
+  - **PUT that creates a resource** when the ID doesn't exist.
+  - **The SPA sending only the fields that changed,** with PATCH.
+- **Consequences:** `updatedAt` changes even when a PUT or PATCH changes nothing.
+
+### Errors are problem+json, with 400 for malformed requests and 422 for invalid values
+
+- **Decision:** every error is `application/problem+json` (RFC 9457).
+  - **400:** the request is malformed:
+    - malformed JSON
+    - an unknown or forbidden body field
+    - an unknown or invalid query parameter
+    - an invalid `limit` or `cursor`
+  - **415:** a write whose `Content-Type` isn't `application/json`.
+  - **422:** the request is well-formed but holds invalid values, such as a wrong type, a bad length or a URL scheme that isn't allowed. The body adds `errors: [{ "pointer": "/url", "detail": "…" }]`, where each pointer is a JSON Pointer into the request body.
+  - **409:** a Collection name that's already in use.
+  - **404:** the constant body from [Isolation](#another-owners-id-is-always-a-404).
+  - **401:** from the guard.
+  - **500:** a generic body with no details.
+  - **Successes:** `201` with a `Location` header for creates, `200` with the body for PUT and PATCH, and `204` for DELETE. A second DELETE of the same ID gets a 404.
+- **Why:**
+  - **The SPA already shows 422 errors next to the form fields,** and JSON Pointers map directly to those fields.
+  - **A 400 means the client is broken.** A 422 means the User typed something wrong.
+  - **One format for every error** keeps the SPA's error handling in one place.
+- **Rejected alternatives:**
+  - **Nest's default `{statusCode, message[], error}`.**
+  - **A single 400 for everything.**
+  - **Accepting any `Content-Type`.**
+- **Consequences:**
+  - **Telling 400 from 422:** the `ValidationPipe`'s `exceptionFactory` sends class-validator's `whitelistValidation` failures to 400 and every other failure to 422.
+  - **The 415 check needs its own code.** Express's JSON parser ignores bodies that aren't JSON, and without the check they would show up as 422 "missing field" errors.
+
+### Lists use cursor pagination with a fixed sort
+
+- **Decision:**
+  - **Parameters:** `?limit=&cursor=`. `limit` is an integer from 1 to 100 and defaults to 50.
+  - **Response:** `{ "items": [...], "nextCursor": string | null }`.
+  - **The cursor:**
+    - It's the last item's sort key plus its `id`, encoded as base64url JSON.
+    - It's unsigned, and clients treat it as opaque.
+    - It isn't tied to the filters it was issued with.
+    - A cursor that can't be decoded gets a 400.
+  - **Sort order:** fixed.
+    - **Bookmarks:** newest first, by `createdAt desc, id desc`.
+    - **Collections:** by `lower(name) asc, id asc`.
+  - **The SPA:**
+    - A "Load more" button uses a fetcher to add the next page to the list.
+    - The cursor never goes in the URL, so a reload or a shared link shows the first page.
+    - Both `/bookmarks` and `/collections` work this way.
+- **Why:**
+  - **Keyset pages don't shift** when items are added or deleted between requests, and there's no `COUNT(*)` query.
+  - **An unbounded list is never acceptable,** even at this scale.
+  - **Signing the cursor adds nothing.** It only positions a query that's already Owner-scoped, so a forged cursor can't reach another Owner's rows.
+  - **A cursor in the URL** would make links that break once the list changes.
+  - **The brief doesn't ask for sorting.**
+- **Rejected alternatives:**
+  - **Offset pagination with a `total` count and page numbers.**
+  - **No pagination.**
+  - **A cursor signed with an HMAC.**
+  - **A bare array with a `Link` header.**
+  - **Client-chosen `?sort=`.**
+- **Consequences:**
+  - **`createdAt` is stored as `timestamptz(3)`.** A JavaScript `Date` holds only milliseconds, so the column must match. Otherwise a cursor taken from a row with microsecond precision would skip or repeat rows.
+  - **Prisma's `orderBy` can't sort on `lower(name)`.** The build decides between a `citext` name column and a generated sort-key column. Either one must also back the unique index.
+
+### Filters and the nested Collection route
+
+- **Decision:**
+  - **`GET /bookmarks`:**
+    - **`collectionId=<uuid>`:** the Bookmarks in that Collection. A Collection that doesn't exist or isn't yours gets a 404.
+    - **`collectionId=none`:** only Uncategorised Bookmarks.
+    - **Anything else in `collectionId`:** a 404.
+    - **`q`:** a case-insensitive substring match over `title` and `url`.
+  - **`GET /collections`:** `q` matches the name.
+  - **`q` in both:**
+    - It's trimmed and at most 200 characters.
+    - An empty `q` counts as absent.
+    - `%`, `_` and `\` are matched literally.
+  - **`GET /collections/:id/bookmarks`:**
+    - It's the same service call as `GET /bookmarks?collectionId=:id`, with the same `q`, pagination, sort and 404.
+    - Sending `collectionId` to it gets a 400.
+  - **The SPA's `/bookmarks` URL:** uses the API's own parameter names, `?collectionId=&q=`, and the loader passes them through unchanged.
+- **Why:**
+  - **`none`** means Uncategorised needs no second parameter that could clash with `collectionId`.
+  - **A 404 for a malformed `collectionId`** means every bad Collection reference in the API gets the same answer.
+  - **One code path** makes the brief's nested route a thin alias.
+  - **Matching parameter names** means the SPA needs no mapping layer.
+- **Rejected alternatives:**
+  - **A separate `uncategorised=true` parameter.**
+  - **A 400 for a malformed `collectionId`.**
+  - **Date-range filters.**
+  - **Searching `notes`.**
+  - **An unpaginated nested route.**
+  - **Friendlier names in the SPA's URL.**
+- **Consequences:** the brief's "filter" requirement is covered by `collectionId` and `q` alone.
