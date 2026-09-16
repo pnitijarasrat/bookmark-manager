@@ -69,7 +69,7 @@ Our only allowed callback is `http://localhost:3000/callback`. With `prompt=none
 ## 5. Distinct `sub`s for different Users
 
 - **Format:** database-connection users have `sub` = `auth0|<24 lowercase hex chars>`. With no User table, this string is what Collections and Bookmarks store as their Owner.
-- **Distinctness: not tested.** Both sign-ins used the same Auth0 user (the same `sub` both times). Confirming that two Auth0 users yield two `sub`s needs a second existing database-connection user, which is relevant to [Seed data for two Users](https://github.com/pnitijarasrat/bookmark-manager/issues/11). Sign-up is disabled, so a second Auth0 user can't be created from here.
+- **Distinctness: not tested.** Both sign-ins used the same Auth0 user (the same `sub` both times). Confirming that two Auth0 users yield two `sub`s needs a second existing database-connection user, which is relevant to [Seed data for two Users](https://github.com/pnitijarasrat/bookmark-manager/issues/11). Only **one** database test user exists, and sign-up is disabled, so a second Auth0 user can't be created from here. Distinctness therefore can't be tested against the tenant. For the brief's seed data for two or more Users, only one Owner can be a real, sign-in-able `sub`. Any other Owner has to be a seeded `sub` in the same format that nobody can sign in as.
 
 ## Sources
 
