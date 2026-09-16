@@ -1,0 +1,705 @@
+ ▐▛███▛█   Claude Code v2.1.273
+▝▜██████▀  Opus 5 · Claude Pro
+  ▝▝ ▝▝    ~/personal/bookmark-manager
+
+
+❯ /clear                                                                        
+
+❯ /mattpocock-skills:grilling on #12                                            
+
+  Ran 4 shell commands (ctrl+o to expand)
+
+⏺ Here's round 1 on #12, the frontend structure. I read the issue, DECISION.md,
+  CONTEXT.md, the parent map (#1) and the related open tickets. Some things are
+  already settled in DECISION.md, so I won't ask about them again:
+  - Data loads through loaders and actions, not inside components.
+  - The access-token getter reaches loaders through the router context.
+  - /login and /callback are the only public routes.
+  - A signed-out visitor goes to /login?returnTo=.
+  - Tokens are kept in memory only.
+  - The API returns 404, never 403 (from #4).
+
+  Some parts of #12 wait on other open tickets, so they aren't in this round:
+  - Filter-by-Collection UX: needs #8's filter contract.
+  - Delete-Collection warning: needs #9.
+  - Account menu contents: needs #6's /me shape.
+
+  ---
+
+  ❓ Q1 - Add a caching library on top of loaders?: Loaders are already settled.
+  The open question is whether to add TanStack Query as a cache behind them, or
+  to use plain React Router loaders and actions and let the router reload the
+  page's data after every action.
+
+  ➡️ Plain loaders and actions, with no TanStack Query. The data is small and
+  belongs to one User, and reloading after each action is correct by default. A
+  second cache would bring its own invalidation bugs. Pending states come from
+  useNavigation and useFetcher.
+
+  ---
+
+  ❓ Q2 - How "view one" is shown:
+  - (a) Both /collections/:id and /bookmarks/:id are full pages.
+  - (b) Both are child routes shown as a Dialog or Drawer over their list.
+  - (c) A mix of the two.
+
+  ➡️ (c):
+  - /collections/:id is a full page. It is itself a list (via GET 
+    /collections/:id/bookmarks) and reuses the Bookmark list component.
+  - /bookmarks/:id is a child route of /bookmarks, shown as an MUI Dialog with 
+    the view and edit form. The URL still links straight to it, closing the
+    dialog goes back to the list, and the list keeps its scroll position and
+    filters.
+
+  ---
+
+  ❓ Q3 - How the route guard works: Auth0's isLoading and isAuthenticated are
+  React state, but loaders run outside React. The options:
+  - (a) A <RequireAuth> wrapper component.
+  - (b) A pathless protected layout route whose middleware or loader reads the
+    auth state from the router context and redirects.
+
+  In both cases the router must wait until Auth0 has finished loading.
+
+  ➡️ (b), set up like this:
+  - Wait for Auth0: don't create the router until isLoading is false, and show a
+    full-screen spinner until then.
+  - Pass the auth state in: put isAuthenticated into the router context
+    alongside the getter.
+  - Guard in one place: a pathless layout route's middleware throws
+    redirect('/login?returnTo=…').
+
+  This runs before any protected loader, so no loader ever runs without a token.
+  Tests can pass a fake context. If RR 8.4's middleware API doesn't fit, a
+  parent loader does the same job.
+
+  ---
+
+  ❓ Q4 - Token expiry and API 401s (left open in DECISION.md): tokens live only
+  in memory and last 2 hours, and silent renewal returns consent_required. So
+  after about 2 hours getAccessTokenSilently throws, or the API returns 401.
+  What should happen then?
+  - (a) Call loginWithRedirect straight away.
+  - (b) Send the user to /login?returnTo=<current>&reason=expired, where the
+    page shows "Your session expired, sign in again".
+  - (c) Show a modal on top of the current page.
+
+  ➡️ (b). One apiFetch helper handles both cases, the thrown getter error and a
+  401 from the API: it clears the local auth state and throws that redirect.
+  This matches the settled decision that we never jump straight to Universal
+  Login. A half-filled form is lost; we accept that and record it as a
+  consequence.
+
+  ---
+
+  ❓ Q5 - How 404s and other errors are shown: a loader gets a 404, either
+  because the resource doesn't exist or because another Owner owns it. What does
+  the user see, and what about 5xx or network failures?
+
+  ➡️
+  - 404: apiFetch throws data(null, { status: 404 }). A route error boundary
+    shows the same "Not found" page in both cases, with a link back to the list,
+    so another Owner's resource can't be told apart from a missing one.
+  - 5xx or network failure: a generic error boundary with a "Try again" button
+    that reloads the data.
+  - Failed action: a 422 validation error is returned as action data and shown
+    next to the form fields. Other errors go to a Snackbar.
+
+  ---
+
+  ❓ Q6 - Shared API types:
+  - (a) OpenAPI generated from Nest (@nestjs/swagger plus its CLI plugin) →
+    openapi-typescript and openapi-fetch in the SPA.
+  - (b) A shared workspace package of zod schemas, used for validation in both
+    Nest and the SPA.
+  - (c) Hand-written types copied into both apps.
+
+  ➡️ (a). The API is the source of truth. The spec also documents the API for
+  reviewers. openapi-fetch gives typed paths, and a CI check can fail if the
+  spec is out of date. This doesn't require a monorepo, so it doesn't depend on
+  the repo-layout decision, which is still open. (b) ties the frontend to the
+  backend's validation library, and (c) lets the two copies drift apart.
+
+  ---
+
+  ❓ Q7 - Create and delete-Bookmark flows: is creating done in a Dialog, an
+  inline form or a separate /new route? Does deleting a Bookmark need a
+  confirmation dialog, or is it immediate with an undo Snackbar?
+
+  ➡️
+  - Create: a "New" button opens an MUI Dialog that submits through a fetcher to
+    the list route's action. There's no /new route.
+  - Delete a Bookmark: a confirmation dialog, because the API has no undo; that
+    depends on #9's soft-vs-hard delete choice. If #9 adds soft delete, we'll
+    revisit the undo Snackbar.
+  - Delete a Collection: waits for #9.
+
+  ---
+
+  ❓ Q8 - App shell: how does the user move between /collections and /bookmarks,
+  and where do sign-out and account details go?
+
+  ➡️ A protected layout route holds everything:
+  - Top bar: an MUI AppBar with the app name.
+  - Navigation: two tabs linked to the routes, "Collections" and "Bookmarks".
+  - Account: an avatar menu on the right with "Sign out", which calls the
+    settled logout.
+  - Landing: / sends signed-in users to /collections.
+
+  What the avatar and menu show waits for #6.
+
+✻ Sautéed for 1m 12s · done 6:07 PM
+
+❯ Q1: no                                                                        
+  Q2: (b)                                                                       
+  Q3: (b)                                                                       
+  Q4: (b)                                                                       
+  Q5: as you suggest                                                            
+  Q6: (a)                                                                       
+  Q7: as you suggest                                                            
+  Q8: as you suggest except for landing, send users to /bookmarks. Drop the     
+  avatar, not necessary.                                                        
+
+⏺ Round 1 is recorded:
+  - Data: plain loaders and actions, with no caching library.
+  - "View one": both detail routes are child routes shown over their list.
+  - Guard: a layout route's middleware.
+  - Expiry and 401s: redirect to /login?reason=expired.
+  - Errors: handled as I suggested.
+  - Shared types: generated from OpenAPI.
+  - Create and delete flows: as I suggested.
+  - Shell: AppBar with tabs, no avatar, and / goes to /bookmarks.
+
+  Round 2 covers what those answers opened up.
+
+  ---
+
+  ❓ Q9 - Dialog or Drawer?: under Q2 (b), what should the child routes open in?
+  - (a) A centred MUI Dialog.
+  - (b) A right-side Drawer, with the list still visible beside it.
+
+  ➡️ (a) Dialog, with fullScreen on small screens. The routes hold short forms,
+  and a Dialog handles focus and keyboard access well on both desktop and phone.
+
+  ---
+
+  ❓ Q10 - What the /collections/:id dialog contains: now that a Collection
+  opens in a dialog, what goes inside it?
+  - (a) Only rename, plus a link that opens /bookmarks filtered to this
+    Collection.
+  - (b) Rename plus a read-only list of its Bookmarks, loaded with GET 
+    /collections/:id/bookmarks. Each Bookmark links to /bookmarks/:id, which
+    closes this dialog and opens that one.
+  - (c) A full editable Bookmark list inside the dialog, so dialogs open on top
+    of dialogs.
+
+  ➡️ (b). It gives the brief's GET /collections/:id/bookmarks a real place in
+  the UI, and it avoids dialogs stacking on top of each other. The Delete button
+  sits here too, but how it warns waits for #9.
+
+  ---
+
+  ❓ Q11 - Identity in the shell without the avatar: where does "Sign out" go,
+  and does the shell show who is signed in at all?
+  - (a) A plain "Sign out" button only. The SPA never calls /me.
+  - (b) The signed-in email as text next to a "Sign out" button, loaded from /me
+    by the layout route's loader.
+
+  ➡️ (b). With two seeded Owners, a visible "who am I" makes the isolation demo
+  easy to follow, and it gives /me a real user in the app. The exact fields wait
+  for #6.
+
+  ---
+
+  ❓ Q12 - Change the other default destinations too?: DECISION.md currently
+  sends users to /collections in two places:
+  - the /callback fallback when there's no valid returnTo
+  - a signed-in user visiting /login
+
+  Should both change to /bookmarks, to match the new landing page?
+
+  ➡️ Yes. Use one constant DEFAULT_ROUTE = '/bookmarks' for all three, and
+  update DECISION.md.
+
+  ---
+
+  ❓ Q13 - Choosing a Collection in the Bookmark form: how does the create/edit
+  form set a Bookmark's Collection, including making it Uncategorised?
+
+  ➡️
+  - The field: an MUI Select listing the User's Collections, with a first option
+    "None (Uncategorised)" that sends collectionId: null.
+  - Where the list comes from: the /bookmarks loader loads the Collections next
+    to the Bookmarks, so both the dialog and the row labels can use it.
+  - Pending on #8: how that null is sent over PUT or PATCH.
+
+  ---
+
+  ❓ Q14 - What the /bookmarks/:id dialog shows:
+  - (a) A read-only view with an "Edit" button that switches to a form.
+  - (b) The edit form straight away, with Save, Delete and Close buttons, plus
+    an "Open link" button that opens the URL in a new tab with rel="noopener 
+    noreferrer".
+
+  ➡️ (b). There's little to "view" beyond the fields themselves, and one mode
+  means less state. Save posts to the child route's action, which closes the
+  dialog after success, and the list then reloads automatically.
+
+✻ Churned for 26s · done 6:12 PM
+
+❯ Q9: Diaglog for everything, you decide the practical UI. It's not matter much 
+  here                                                                          
+  Q10: b                                                                        
+  Q11: b                                                                        
+  Q12: yes send them all to /bookmarks                                          
+  Q13: this is ui, you decide                                                   
+  Q14: b                                                                        
+
+⏺ Round 2 is recorded. UI details (Dialog layout, the Collection picker) are
+  mine to decide.
+  - Q10: the Collection dialog has rename plus a read-only Bookmark list.
+  - Q11: the shell shows the email from /me next to "Sign out".
+  - Q12: every default destination goes to /bookmarks.
+  - Q14: the Bookmark dialog opens straight into the edit form.
+
+  Two questions are left in this ticket. Everything else in #12 now waits on
+  other tickets.
+
+  ---
+
+  ❓ Q15 - Where filter state lives on /bookmarks: the filter options come from
+  #8, but where they're stored is a structural choice.
+  - (a) URL search params, for example /bookmarks?collection=<id|none>&q=…, read
+    by the loader.
+  - (b) React state inside the page.
+
+  ➡️ (a). The loader reads the params and passes them to the API, so a filtered
+  view can be linked to and survives back and forward. The dialog route keeps
+  the params when it opens and closes, so closing a Bookmark goes back to the
+  same filtered list. #8 decides the exact param names and the pagination UI.
+
+  ---
+
+  ❓ Q16 - What to do with #12 while three branches wait on other tickets:
+  - Filter options and pagination: wait on #8.
+  - The delete-Collection warning: waits on #9.
+  - Which /me fields the shell shows: waits on #6.
+
+  What happens to #12 now?
+  - (a) Close #12 now. Write its decisions into DECISION.md under a Frontend
+    section. Add a "frontend consequence" bullet to #8, #9 and #6 so each is
+    settled there.
+  - (b) Keep #12 open until those three tickets close, then come back for a
+    final round.
+
+  ➡️ (a). Each of those UI choices follows directly from its API decision, and
+  none of them can change what's already decided here. Keeping #12 open would
+  only add another ticket to revisit.
+
+  Once you answer these two, nothing is left to ask in #12. After you confirm,
+  I'll write it up: the Frontend section in DECISION.md and the notes on the
+  related tickets.
+
+✻ Cooked for 10s · done 6:15 PM
+
+❯ Q15: a                                                                        
+  Q16: a                                                                        
+
+⏺ Nothing is left to ask in #12. Here's what we agreed; please check it before I
+  write anything down.
+
+  Frontend structure (#12)
+  1. Data: plain React Router 8 loaders and actions, with no caching library.
+     After each action, the router reloads the data. Pending states come from
+     useNavigation and useFetcher.
+  2. Routes:
+     - Protected layout: a pathless layout route contains everything protected.
+     - Detail routes: /collections/:id is a child of /collections and
+       /bookmarks/:id is a child of /bookmarks. Both open as MUI Dialogs, which
+       become full-screen on small screens.
+     - Creating: also happens in a Dialog.
+  3. Guard:
+     - Waiting for Auth0: the router isn't created until Auth0's isLoading is
+       false.
+     - Router context: isAuthenticated and the token getter are passed in
+       through it.
+     - The check: the layout route's middleware (or a parent loader if
+       middleware doesn't fit) redirects to /login?returnTo=….
+  4. Expiry and 401: a single apiFetch helper handles both a failed token fetch
+     and an API 401. It clears the auth state and redirects to
+     /login?returnTo=<current>&reason=expired, and /login shows "session
+     expired". A half-filled form is lost, and we accept that.
+  5. Errors:
+     - 404: "Not found" in the route error boundary, so another Owner's resource
+       looks the same as a missing one.
+     - 5xx or network failure: an error boundary with "Try again".
+     - Failed actions: a 422 shows errors next to the form fields. Anything else
+       shows a Snackbar.
+  6. Types: OpenAPI generated from Nest with @nestjs/swagger →
+     openapi-typescript and openapi-fetch, with a CI check that the spec is up
+     to date.
+  7. Collection dialog: rename, plus a read-only list of its Bookmarks from GET 
+     /collections/:id/bookmarks. Each links to /bookmarks/:id.
+  8. Bookmark dialog: opens straight into the edit form, with Save, Delete,
+     Close and "Open link" (noopener noreferrer). Deleting a Bookmark asks for
+     confirmation. The Collection picker includes "None (Uncategorised)".
+  9. Shell:
+     - Top bar: an AppBar with the app name and the Collections and Bookmarks
+       tabs.
+     - Account: the signed-in email from /me as text, and a "Sign out" button.
+       There's no avatar.
+  10. Default destination: DEFAULT_ROUTE = '/bookmarks' is used for /, the
+      /callback fallback, and a signed-in user visiting /login. DECISION.md gets
+      updated to match.
+  11. Filters: kept in URL search params on /bookmarks and read by the loader.
+      They stay in the URL while a dialog opens and closes.
+
+  Waiting on other tickets:
+  - #8: filter options, param names and the pagination UI.
+  - #9: the delete-Collection warning.
+  - #6: which /me fields the shell shows.
+
+  Once you confirm, I'll:
+  - add a Frontend section to DECISION.md, with Decision / Why / Rejected
+    alternatives / Consequences for each item
+  - close the "Open" item on SPA 401 handling
+  - change the /collections defaults to /bookmarks
+  - add a "frontend consequence" note to #8, #9 and #6
+  - add a line to #1's "Decisions so far"
+  - close #12
+
+  Is this our shared understanding?
+
+✻ Churned for 11s · done 6:16 PM
+
+❯ yes, go ahead                                                                 
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+⏺ Update(DECISION.md)
+  ⎿  Added 2 lines, removed 2 lines
+      114    - **Public routes:** only `/login` and `/callback`.
+      115    - **`/login`:** shows the app name and a single "Sign in" bu
+           tton, which calls `loginWithRedirect`. The password is entered
+            on Universal Login, never in our app.
+      116    - **Signed-out visitors:** any other route sends them to `/l
+           ogin?returnTo=<path>`.
+      117 -  - **`/callback`:** shows only a loading indicator. `onRedire
+          -ctCallback` sends the user to `returnTo` if it's a relative pa
+          -th inside the app, and to `/collections` otherwise.           
+      118 -  - **Signed-in users:** visiting `/login` sends them to `/col
+          -lections`.                                                    
+      117 +  - **`/callback`:** shows only a loading indicator. `onRedire
+          +ctCallback` sends the user to `returnTo` if it's a relative pa
+          +th inside the app, and to `/bookmarks` otherwise (see [Default
+          + destination](#default-destination-is-bookmarks)).            
+      118 +  - **Signed-in users:** visiting `/login` sends them to `/boo
+          +kmarks`.                                                      
+      119  - **Why:**
+      120    - **Passing the getter explicitly** avoids hidden module sta
+           te, and tests can pass a fake getter.
+      121    - **An app-owned login page** gives signed-out visitors a cl
+           ear page instead of an immediate redirect off the site.
+
+⏺ Update(DECISION.md)
+  ⎿  Added 1 line, removed 1 line
+      126    - **Fetching data in components instead of loaders.**
+      127    - **Sending signed-out visitors straight to Universal Login.
+           **
+      128    - **A login form in our own app.** The tenant refuses the pa
+           ssword grant, so it isn't possible.
+      129 -- **Consequences:** the frontend layout is decided in [#12](ht
+          -tps://github.com/pnitijarasrat/bookmark-manager/issues/12).   
+      129 +- **Consequences:** the frontend layout is described under [Fr
+          +ontend](#frontend).                                           
+      130  
+      131  ### Logout
+      132  
+
+⏺ Update(DECISION.md)
+  ⎿  Added 144 lines, removed 2 lines
+      135  - **Rejected alternatives:** a server-side token denylist. It 
+           would need state and a store, just to handle tokens that expir
+           e within 2 hours anyway.
+      136  - **Consequences:** an access token copied before logout keeps
+            working until its `exp`, at most 2 hours later. Auth0 JWT acc
+           ess tokens can't be revoked, and we accept this.
+      137  
+      138 -### Open                                                      
+      138 +Token expiry and 401 handling in the SPA is decided under [Fro
+          +ntend](#an-expired-session-sends-the-user-back-to-login).     
+      139  
+      140 -- **Token expiry and 401 handling in the SPA** (what happens w
+          -hen `getAccessTokenSilently` fails, or the API returns 401) is
+          - deferred to [#12](https://github.com/pnitijarasrat/bookmark-m
+          -anager/issues/12).                                            
+      140 +---                                                           
+      141 +                                                              
+      142 +## Frontend                                                   
+      143 +                                                              
+      144 +Decided in [#12](https://github.com/pnitijarasrat/bookmark-man
+          +ager/issues/12).                                              
+      145 +                                                              
+      146 +### Data goes through loaders and actions only, with no client
+          + cache                                                        
+      147 +                                                              
+      148 +- **Decision:** React Router 8 loaders read data and actions w
+          +rite it. After every action, the router reloads the data for t
+          +he current page. Pending states come from `useNavigation` and 
+          +`useFetcher`. No client-side cache library is used.           
+      149 +- **Why:** the data is small and belongs to one User, so reloa
+          +ding after each action is cheap, and it is correct without ext
+          +ra work. A second cache would need its own invalidation rules,
+          + which is a common source of stale-data bugs.                 
+      150 +- **Rejected alternatives:** **TanStack Query** as a cache beh
+          +ind the loaders, or instead of them.                          
+      151 +- **Consequences:** every write is followed by a refetch of th
+          +e current page's data. At this scale we accept the extra reque
+          +sts.                                                          
+      152 +                                                              
+      153 +### Routes: the lists are pages, and everything else opens in 
+          +a dialog                                                      
+      154 +                                                              
+      155 +- **Decision:**                                               
+      156 +  - **Protected routes:** they all sit under one pathless layo
+          +ut route (see the next section).                              
+      157 +  - **Pages:** `/bookmarks` and `/collections` are the only fu
+          +ll pages.                                                     
+      158 +  - **Details:** `/bookmarks/:id` is a child route of `/bookma
+          +rks`, and `/collections/:id` a child route of `/collections`. 
+          +Each opens as an MUI Dialog over its list, and goes full-scree
+          +n on small screens. Closing the dialog goes back to the parent
+          + list.                                                        
+      159 +  - **Creating:** a "New" button opens a Dialog that submits t
+          +hrough a fetcher to the list route's action. There is no `/new
+          +` route.                                                      
+      160 +- **Why:**                                                    
+      161 +  - **The list stays visible,** keeping its scroll position an
+          +d filters.                                                    
+      162 +  - **Every detail still has its own URL,** so it can be linke
+          +d to and works with back and forward.                         
+      163 +  - **A Dialog manages focus and keyboard access for us,** on 
+          +both desktop and phone.                                       
+      164 +- **Rejected alternatives:**                                  
+      165 +  - **Full detail pages.**                                    
+      166 +  - **A side Drawer.**                                        
+      167 +  - **A mix, with `/collections/:id` as a full page.**        
+      168 +- **Consequences:** detail routes need their parent list's lay
+          +out to render, and a deep link to `/bookmarks/:id` loads the l
+          +ist as well.                                                  
+      169 +                                                              
+      170 +### The route guard is layout-route middleware                
+      171 +                                                              
+      172 +- **Decision:**                                               
+      173 +  - **Waiting for Auth0:** the router isn't created until Auth
+          +0's `isLoading` is false. Until then, a full-screen spinner is
+          + shown.                                                       
+      174 +  - **Passing auth state:** `isAuthenticated` is passed throug
+          +h the router context, next to the token getter.               
+      175 +  - **The check:** middleware on the pathless protected layout
+          + route throws `redirect('/login?returnTo=<path>')` for signed-
+          +out visitors. If RR 8.4's middleware API doesn't fit, a parent
+          + loader does the same job.                                    
+      176 +- **Why:**                                                    
+      177 +  - **Every protected loader runs after the guard,** so no loa
+          +der runs without a token.                                     
+      178 +  - **The check lives in one place,** so a new protected route
+          + is covered without anyone having to remember it.             
+      179 +  - **Tests can pass a fake context.**                        
+      180 +- **Rejected alternatives:** a `<RequireAuth>` wrapper compone
+          +nt. Loaders run before components render, so it can't stop the
+          +m from running.                                               
+      181 +- **Consequences:** the app's first render waits for the Auth0
+          + SDK to finish loading.                                       
+      182 +                                                              
+      183 +### An expired session sends the user back to `/login`        
+      184 +                                                              
+      185 +- **Decision:** one `apiFetch` helper attaches the Bearer toke
+          +n to every request. The redirect is triggered in two cases:   
+      186 +  - `getAccessTokenSilently` throws.                          
+      187 +  - The API returns 401.                                      
+      188 +                                                              
+      189 +  In either case, the helper clears the local auth state and t
+          +hrows a redirect to `/login?returnTo=<current path>&reason=exp
+          +ired`. `/login` then shows "Your session expired, sign in agai
+          +n".                                                           
+      190 +- **Why:**                                                    
+      191 +  - **Expiry is certain:** tokens live in memory only, last 2 
+          +hours, and can't be renewed silently (see [Auth](#tokens-are-k
+          +ept-in-memory-only)).                                         
+      192 +  - **The user isn't sent off-site without warning,** matching
+          + the settled login-page decision.                             
+      193 +  - **One helper** handles both failure paths.                
+      194 +- **Rejected alternatives:**                                  
+      195 +  - **Calling `loginWithRedirect` immediately.**              
+      196 +  - **A re-login modal over the current page.**               
+      197 +- **Consequences:** a half-filled form is lost when the sessio
+          +n expires. We accept this.                                    
+      198 +                                                              
+      199 +### How errors are shown                                      
+      200 +                                                              
+      201 +- **Decision:**                                               
+      202 +  - **404:** `apiFetch` throws a 404 response. The route error
+          + boundary shows a "Not found" page with a link back to the lis
+          +t.                                                            
+      203 +  - **5xx or network failure:** an error boundary with "Try ag
+          +ain", which reloads the data.                                 
+      204 +  - **Failed actions:** a 422 is returned as action data and s
+          +hown next to the form fields. Any other failure shows a Snackb
+          +ar.                                                           
+      205 +- **Why:** the API answers 404 for another Owner's resource to
+          +o, so the SPA shows the same page for both. That page reveals 
+          +nothing about whether the resource exists.                    
+      206 +- **Rejected alternatives:** separate "forbidden" and "not fou
+          +nd" messages.                                                 
+      207 +- **Consequences:** the SPA can't tell a mistyped ID from some
+          +one else's resource, which is intended.                       
+      208 +                                                              
+      209 +### API types are generated from OpenAPI                      
+      210 +                                                              
+      211 +- **Decision:**                                               
+      212 +  - **Spec:** the API produces an OpenAPI spec with `@nestjs/s
+          +wagger` and its CLI plugin.                                   
+      213 +  - **Frontend:** the SPA generates types from it with `openap
+          +i-typescript` and calls the API through `openapi-fetch`, wrapp
+          +ed by `apiFetch`.                                             
+      214 +  - **CI:** a check fails if the committed spec is out of date
+          +.                                                             
+      215 +- **Why:**                                                    
+      216 +  - **The API is the single source of truth.**                
+      217 +  - **The spec also documents the API for reviewers.**        
+      218 +  - **Request paths and bodies are type-checked.**            
+      219 +  - **No monorepo is needed.**                                
+      220 +- **Rejected alternatives:**                                  
+      221 +  - **A shared zod schema package.** It would tie the SPA to t
+          +he API's validation library.                                  
+      222 +  - **Hand-written types in both apps.** The two copies drift 
+          +apart.                                                        
+      223 +- **Consequences:** a change to the API contract needs the spe
+          +c and the types regenerated.                                  
+      224 +                                                              
+      225 +### What the dialogs contain                                  
+      226 +                                                              
+      227 +- **Decision:**                                               
+      228 +  - **Collection dialog:**                                    
+      229 +    - a rename form                                           
+      230 +    - a read-only list of the Collection's Bookmarks from `GET
+          + /collections/:id/bookmarks`, each linking to `/bookmarks/:id`
+          + (following one closes this dialog and opens that one)        
+      231 +    - a Delete button, whose warning depends on [#9](https://g
+          +ithub.com/pnitijarasrat/bookmark-manager/issues/9)            
+      232 +  - **Bookmark dialog:**                                      
+      233 +    - **Fields:** the edit form opens straight away.          
+      234 +    - **Collection picker:** a Select listing the User's Colle
+          +ctions, with "None (Uncategorised)" as the first option.      
+      235 +    - **Buttons:** Save, Delete, Close, and "Open link", which
+          + opens the URL in a new tab with `rel="noopener noreferrer"`. 
+      236 +    - **Where the Collection list comes from:** the `/bookmark
+          +s` loader loads it next to the Bookmarks.                     
+      237 +  - **Deleting a Bookmark:** asks for confirmation first.     
+      238 +  - **After a successful save:** the dialog closes and the lis
+          +t reloads.                                                    
+      239 +- **Why:**                                                    
+      240 +  - **The Collection dialog** gives the brief's `GET /collecti
+          +ons/:id/bookmarks` a real place in the UI, without dialogs ope
+          +ning on top of dialogs.                                       
+      241 +  - **A Bookmark has little to show beyond its fields,** so a 
+          +single edit mode is simpler.                                  
+      242 +  - **Deletion has no undo,** so it asks first.               
+      243 +- **Rejected alternatives:**                                  
+      244 +  - **A Collection dialog with only a rename field.**         
+      245 +  - **An editable Bookmark list inside the Collection dialog.*
+          +*                                                             
+      246 +  - **A read-only Bookmark view with a separate Edit mode.**  
+      247 +  - **An undo Snackbar instead of a delete confirmation.**    
+      248 +- **Consequences:** how the "None" choice is sent (PUT or PATC
+          +H with `collectionId: null`) follows [#8](https://github.com/p
+          +nitijarasrat/bookmark-manager/issues/8).                      
+      249 +                                                              
+      250 +### The app shell                                             
+      251 +                                                              
+      252 +- **Decision:**                                               
+      253 +  - **Top bar:** an MUI AppBar with the app name and two tabs,
+          + "Bookmarks" and "Collections", linked to their routes.       
+      254 +  - **Right side:** the signed-in email as plain text, loaded 
+          +from `/me` by the layout route's loader, and a "Sign out" butt
+          +on that calls the logout described in [Logout](#logout).      
+      255 +  - There is no avatar.                                       
+      256 +- **Why:**                                                    
+      257 +  - **Showing who is signed in** makes the isolation demo with
+          + two seeded Owners easy to follow.                            
+      258 +  - **It gives `/me` a real use** in the app.                 
+      259 +  - **An avatar adds nothing.**                               
+      260 +- **Rejected alternatives:**                                  
+      261 +  - **An avatar menu.**                                       
+      262 +  - **A shell that never calls `/me`.**                       
+      263 +- **Consequences:** which `/me` fields the shell shows follows
+          + [#6](https://github.com/pnitijarasrat/bookmark-manager/issues
+          +/6).                                                          
+      264 +                                                              
+      265 +### Default destination is `/bookmarks`                       
+      266 +                                                              
+      267 +- **Decision:** one constant, `DEFAULT_ROUTE = '/bookmarks'`, 
+          +is used in three places:                                      
+      268 +  - `/` redirects there.                                      
+      269 +  - `/callback` uses it when there's no valid `returnTo`.     
+      270 +  - A signed-in user visiting `/login` is sent there.         
+      271 +- **Why:** saving and finding links is the main task, and Coll
+          +ections are only a way of organising them.                    
+      272 +- **Rejected alternatives:** `/collections` as the landing pag
+          +e.                                                            
+      273 +- **Consequences:** none.                                     
+      274 +                                                              
+      275 +### Filters live in the URL                                   
+      276 +                                                              
+      277 +- **Decision:** the `/bookmarks` filters are kept in URL searc
+          +h params, which the loader reads and passes on to the API. The
+          + params stay in the URL while a Bookmark dialog opens and clos
+          +es.                                                           
+      278 +- **Why:**                                                    
+      279 +  - **A filtered view can be linked to** and survives back and
+          + forward.                                                     
+      280 +  - **Closing a dialog** goes back to the same filtered list. 
+      281 +- **Rejected alternatives:** filter state kept in React state.
+      282 +- **Consequences:** the filter options, param names and pagina
+          +tion UI follow [#8](https://github.com/pnitijarasrat/bookmark-
+          +manager/issues/8).                                            
+
+⏺ DECISION.md is updated. Next I'll update the GitHub issues.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ #12 is closed and its decisions are written up.
+
+  - DECISION.md:
+    - New Frontend section: nine decisions, each with Decision / Why / Rejected
+      alternatives / Consequences.
+    - Auth section: the open item on expired sessions and 401s now points to
+      where it's decided. The two places that sent users to /collections now
+      send them to /bookmarks.
+  - #1: added a line for #12 to "Decisions so far".
+  - #8, #9, #6: each got a comment with the part it still has to decide:
+    - #8: the filter and pagination UI, and how collectionId: null is sent.
+    - #9: the warning shown before deleting a Collection.
+    - #6: which /me fields the top bar shows.
+
+  The comments on #8, #9 and #6 point to the Frontend section, but the
+  DECISION.md changes are only on local main: nothing is committed or pushed
+  yet. Should I commit them as "Record frontend structure decisions in
+  DECISION.md (#12)" and push to main, like the earlier tickets?
+
+✻ Sautéed for 1m 12s · done 6:17 PM
+
+❯ yes, commit and push                                                          
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ I committed the DECISION.md changes as 68c2aca and pushed them to origin/main,
+  so the links in the comments on #8, #9 and #6 now work.
+
+  Only DECISION.md went into the commit. The .claude/ folder and the three
+  session export .txt files are still uncommitted. According to the session-logs
+  note, they need scrubbing before they go into this public repo, and where
+  they go (a session-logs/ folder) isn't decided yet.
+
+✻ Crunched for 10s · done 6:18 PM

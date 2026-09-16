@@ -1,0 +1,673 @@
+ ▐▛███▛█   Claude Code v2.1.273
+▝▜██████▀  Opus 5 · Claude Pro
+  ▝▝ ▝▝    ~/personal/bookmark-manager
+
+
+❯ /clear                                                                        
+
+❯ /mattpocock-skills:grilling on #8                                             
+
+⏺ I'll start by reading issue #8 and the existing decision docs.
+
+  Ran 4 shell commands (ctrl+o to expand)
+
+⏺ Issue #8 asks for the API contract: fields and constraints, PUT vs PATCH,
+  filters, pagination and the error format. Some points are already settled in
+  DECISION.md and I won't reopen them:
+  - ownerId is never in responses, and sending it gets a 400.
+  - A Collection or Bookmark ID you don't own always gets the same constant 404
+    body, including in filters and in a Bookmark body's collectionId.
+  - Unknown body fields get a 400.
+  - The SPA shows 422 errors next to form fields.
+  - IDs are UUIDv4.
+
+  One fact I couldn't find: the brief's suggested shape isn't in the repo or in
+  the issues. Since the write-up has to justify each change from it, please
+  paste that part of the brief. Until then, I'm assuming Collection {id, name}
+  and Bookmark {id, url, title, notes, collectionId}.
+
+  Here's round 1. None of these questions depend on each other.
+
+  ---
+
+  ❓ Q1 - Bookmark URL rules: What makes a URL valid, and do we store it exactly
+  as entered?
+  - (a) Any string
+  - (b) Parsed with the WHATWG URL parser, http:/https: only, host required, ≤
+    2048 chars, stored as entered after trimming
+  - (c) Same as (b), but normalised before storing (lowercase host, strip
+    fragment, drop default port)
+
+  ➡️ (b). Allowing only http(s) blocks javascript: and data: URLs behind the
+  "Open link" button. 2048 characters is the common practical limit. Normalising
+  changes what the User typed, and nothing needs it unless we deduplicate (Q5).
+
+  ---
+
+  ❓ Q2 - Bookmark title: Is a title required? We won't fetch page titles (out
+  of scope), so nothing can fill it in for the User.
+  - (a) Required, 1–200 chars after trimming
+  - (b) Optional, and the list shows the URL when it's missing
+  - (c) Optional, and the server copies the URL into it
+
+  ➡️ (a). It's the simplest rule, the list always has something readable to
+  show, and the field has a single state.
+
+  ---
+
+  ❓ Q3 - Notes: How long can notes be, and how is "no notes" stored?
+  - (a) string, default "", ≤ 2000 chars
+  - (b) string | null, ≤ 2000 chars
+
+  ➡️ (a). There's one "empty" state, so there's no "" vs null ambiguity when
+  PATCH clears notes. Length is only capped (≤ 2000), with no minimum.
+
+  ---
+
+  ❓ Q4 - Collection name: How long can a name be, and must it be unique per
+  Owner?
+  - (a) 1–100 chars after trimming, not unique
+  - (b) 1–100 chars, unique per Owner, case-sensitive
+  - (c) 1–100 chars, unique per Owner, case-insensitive. Enforced by a unique
+    index on (owner_id, lower(name)) in a hand-edited migration. A clash
+    returns 409.
+
+  ➡️ (c). Two Collections called "Reading" and "reading" only confuse the
+  Collection picker. The index is scoped per Owner, as #7 requires, so a 409
+  reveals nothing about other Owners. The migration is already hand-edited for
+  the foreign key anyway.
+
+  ---
+
+  ❓ Q5 - Duplicate URLs per Owner: Can an Owner save the same URL twice?
+  - (a) Allowed
+  - (b) Rejected with 409 on an exact match
+  - (c) Rejected with 409 after normalising (needs 1c)
+
+  ➡️ (a). A read-later list can reasonably hold the same link twice, for example
+  with different notes. Checking only exact matches is easy to get around, and
+  normalising (c) is extra work that the brief doesn't ask for.
+
+  ---
+
+  ❓ Q6 - Timestamps: Which timestamps do responses include?
+  - (a) None
+  - (b) createdAt only
+  - (c) createdAt and updatedAt, set by the server, ISO 8601 UTC
+
+  ➡️ (c). Pagination and sorting need createdAt, and updatedAt costs nothing.
+  The server always sets both. A client that sends either gets a 400 through the
+  existing whitelist rule.
+
+  ---
+
+  ❓ Q7 - PUT vs PATCH semantics: How do PUT and PATCH differ?
+  - PUT: a full replace. Every writable field is required, including
+    collectionId (a UUID or explicit null) and notes. It never creates, and
+    returns 404 if the resource is missing.
+  - PATCH: a partial update.
+    - An absent field stays unchanged.
+    - collectionId: null moves the Bookmark to Uncategorised.
+    - null for any other field gets a 422.
+    - An empty body {} is a 200 no-op.
+  - Collections: the only writable field is name, so PUT and PATCH end up the
+    same.
+
+  Alternatives: PATCH as JSON Merge Patch (RFC 7396) or JSON Patch (RFC 6902).
+
+  ➡️ As described above, with a plain application/json body, not merge-patch or
+  JSON Patch. Leaving a field out and sending null stay two different things,
+  which is all "move to Uncategorised" needs.
+
+  ---
+
+  ❓ Q8 - Error format and status codes: What do error responses look like, and
+  which status codes do we use?
+  - Format: everything is application/problem+json (RFC 9457).
+  - 400: a syntactically bad request, meaning malformed JSON, unknown or
+    forbidden fields, or bad query params.
+  - 422: a request that is well-formed but has invalid values, such as a wrong
+    type, too long, or a bad URL scheme. The body adds errors: [{ "pointer": 
+    "/url", "detail": "…" }] (JSON Pointer).
+  - Other codes: 409 for a name clash, 404 as already decided, and a generic 500
+    with no details.
+
+  The alternative is a single 400 for everything, in Nest's default {statusCode,
+  message[], error} shape.
+
+  ➡️ The split above. The SPA already expects 422 for field errors, and pointers
+  map straight to form fields. The exception factory can tell apart
+  class-validator's whitelistValidation errors, which become 400, from all other
+  errors, which become 422.
+
+  ---
+
+  ❓ Q9 - Pagination style: How are lists paginated?
+  - (a) Offset: ?page=&pageSize=, with a total count, so the UI can show page
+    numbers
+  - (b) Cursor: ?limit=&cursor=, with an opaque nextCursor, keyset-paginated on
+    the sort key plus id, so the UI shows "Load more"
+  - (c) No pagination
+
+  ➡️ (b), with limit defaulting to 50 and capped at 100. Pages don't shift when
+  items are added or deleted between requests, and there's no COUNT(*) query. A
+  single User's data is small, but the brief asks for list, and an unbounded
+  list isn't acceptable. The one weakness is that "Load more" doesn't sit well
+  with URL-held filters. If you'd rather the page number were linkable, choose
+  (a).
+
+  ---
+
+  ❓ Q10 - Sort order: How are lists sorted?
+  - (a) A fixed order: Bookmarks newest first (createdAt desc, id desc),
+    Collections by name (lower(name) asc, id asc)
+  - (b) Client-chosen ?sort= from an allow-list
+
+  ➡️ (a). The brief doesn't ask for sorting, and a fixed order keeps the cursor
+  simple.
+
+  ---
+
+  ❓ Q11 - Bookmark filters: Which filters does GET /bookmarks support?
+  - collectionId=<uuid>: a Collection you don't own gets 404, as decided.
+  - Uncategorised: either collectionId=none, or a separate uncategorised=true
+    that gets a 400 when combined with collectionId.
+  - q=: a case-insensitive substring match over title and URL (should it cover
+    notes too?), ≤ 200 chars, with % and _ escaped.
+  - Date ranges (createdFrom/createdTo): yes or no?
+  - A malformed collectionId value: 400, like any bad query param, or 404, like
+    a malformed path ID?
+
+  ➡️ collectionId=<uuid>|none and q over title and URL only, with no date
+  ranges. For a malformed collectionId, return 404, so that every bad Collection
+  reference in the API gets the same answer. Date ranges and notes search go
+  beyond the "filter" the brief asks for.
+
+  ---
+
+  ❓ Q12 - Collection filters: What can GET /collections filter on?
+
+  ➡️ Only q=, a case-insensitive substring match on the name, with the same
+  rules as Q11.
+
+  ---
+
+  ❓ Q13 - GET /collections/:id/bookmarks vs GET /bookmarks?collectionId=: How
+  do these two endpoints relate?
+  - (a) The same service call. The nested route behaves exactly like
+    /bookmarks?collectionId=:id, with the same pagination, sort and q. Sending
+    collectionId to the nested route gets a 400.
+  - (b) The nested route returns a simple, unpaginated list.
+  - (c) We drop one of them. The brief names both, so this isn't really an
+    option.
+
+  ➡️ (a). There's one code path, and the brief's endpoint becomes a thin alias.
+  It shares the same 404 behaviour for Collections you don't own.
+
+  ---
+
+  ❓ Q14 - Success status codes: Which codes do successful writes return?
+
+  ➡️ Create: 201 with the body and a Location header. PUT and PATCH: 200 with
+  the updated body. DELETE: 204, and a second DELETE of the same ID gets a 404.
+
+  ---
+
+  ❓ Q15 - Collection response shape: Should a Collection include bookmarkCount?
+
+  ➡️ Yes. The Collections page can show counts, and #9's delete warning ("3
+  Bookmarks will…") can use it without an extra request. It's a single _count in
+  the same Owner-scoped query.
+
+  ---
+
+  ❓ Q16 - Bookmark response shape: How does a Bookmark refer to its Collection?
+  - (a) By collectionId only
+  - (b) By an embedded collection: {id, name} | null
+
+  ➡️ (a). The /bookmarks loader already loads the Collection list for the
+  picker, so the SPA can look up names itself. It also keeps the write shape and
+  the read shape the same.
+
+✻ Cogitated for 1m 26s · done 8:45 PM
+
+❯ agree with all recommendations.                                               
+  These are shapes, don't assume                                                
+  Collection: id , name , ownerId , createdAt , updatedAt                       
+  Bookmark: id , url , title , notes? , collectionId? , ownerId , createdAt ,   
+  updatedAt.                                                                    
+  Also create the API_DESIGN.md at the root when finish this grilling session.  
+  The API_DESIGN.md is your API contract: resources, verbs, status codes, list  
+  and filter parameters, error shape,                                           
+  the relation and its on-delete behaviour, and how the privacy invariant in §3 
+  is enforced in code. Also                                                     
+  call out 2–3 places your agent's first attempt was wrong, and how you found   
+  and corrected each.                                                           
+
+⏺ Noted. The brief's shapes change three of my assumptions:
+  - ownerId, createdAt and updatedAt are already in the brief.
+  - notes is optional (notes?).
+  - collectionId is optional (collectionId?).
+
+  The only changes we make to the brief's shapes are the ones you've agreed to:
+  we drop ownerId, add bookmarkCount, and always return notes as a string (""
+  when there are none).
+
+  Before round 2, I'm searching the earlier session exports for real
+  corrections. API_DESIGN.md has to cite actual mistakes, not invented ones.
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+⏺ That turned up four real corrections, which I'll put to you as Q9. Here's
+  round 2. These questions are unlocked by your round 1 answers and the brief's
+  shapes.
+
+  ---
+
+  ❓ Q1 - Create body defaults: The brief marks notes? and collectionId? as
+  optional. What does POST /bookmarks require?
+  - Required: url and title.
+  - Optional: notes, which defaults to "", and collectionId, which defaults to
+    null (Uncategorised).
+  - Wrong types: notes: null gets a 422, because notes is always a string.
+    collectionId: null is allowed.
+  - POST /collections: requires name.
+
+  ➡️ As described above.
+
+  ---
+
+  ❓ Q2 - Whitespace and trimming: How are title, name and q trimmed?
+  - title and name: trimmed before validation, and a value that is only
+    whitespace gets a 422 ("must not be empty").
+  - notes: stored exactly as sent.
+  - url: trimmed.
+  - q: trimmed, and an empty q is treated as if it were absent.
+
+  ➡️ As described above.
+
+  ---
+
+  ❓ Q3 - List response envelope: What does a list response look like?
+  - (a) { "items": [...], "nextCursor": "…" | null }
+  - (b) A bare array, with the next cursor in a Link header
+
+  ➡️ (a). openapi-fetch types it directly, and a null nextCursor means there are
+  no more pages.
+
+  ---
+
+  ❓ Q4 - The cursor: How is the cursor encoded, and what happens when it's bad?
+  - Encoding: base64url JSON of the last item's sort key plus its id, which is
+    {createdAt, id} for Bookmarks and {name, id} for Collections. Clients treat
+    it as opaque.
+  - Bad cursor: a malformed or undecodable cursor gets a 400.
+  - Filters: they aren't bound into the cursor. A cursor used with different
+    filters still returns a valid keyset page.
+
+  The alternative is an HMAC-signed cursor. It's unnecessary, because the cursor
+  only positions a query that is already Owner-scoped, so a forged cursor can't
+  reach anyone else's rows.
+
+  ➡️ Unsigned base64url, with a 400 when it's bad.
+
+  ---
+
+  ❓ Q5 - Pagination UI: How does /bookmarks show more results?
+  - The button: a "Load more" button uses a fetcher to request the next page and
+    adds it to the list.
+  - The URL: the cursor stays out of it. The URL holds only collectionId and q,
+    so a reload or shared link shows the first page.
+  - Collections: /collections uses the same pattern.
+
+  ➡️ As described above. A cursor in the URL would make links that break once
+  items change.
+
+  ---
+
+  ❓ Q6 - Filter param names in the SPA URL: Which param names does the SPA URL
+  use?
+  - (a) Exactly the API's names, ?collectionId=<uuid>|none&q=, which the loader
+    passes through unchanged
+  - (b) Friendlier names, such as ?collection=&search=
+
+  ➡️ (a). There's no mapping layer, and the generated types cover it.
+
+  ---
+
+  ❓ Q7 - Which verb the SPA uses: Which method do the edit dialogs send?
+  - (a) PUT, because the Bookmark and Collection forms always have every field.
+    "None (Uncategorised)" is sent as collectionId: null.
+  - (b) PATCH, sending only the fields that changed.
+
+  ➡️ (a). The form is the whole resource, and PUT makes "None" explicit. The API
+  still offers PATCH for other clients, as the brief requires.
+
+  ---
+
+  ❓ Q8 - Collection delete behaviour (#9): API_DESIGN.md has to state the
+  on-delete behaviour, but #9 is still open. Should we settle it here or leave
+  it for #9?
+  - (a) Settle it here. Deleting a Collection sets its Bookmarks' collectionId
+    to null, so they become Uncategorised. It's a hard delete with no undo, and
+    returns 204. DECISION.md already plans the ON DELETE SET NULL 
+    (collection_id) migration. #9 keeps only the frontend warning text and the
+    product-owner justification.
+  - (b) Leave it open, and mark it "pending #9" in API_DESIGN.md.
+
+  ➡️ (a). Every earlier decision already assumes set-null, including the
+  archive, the composite foreign key note and the bookmarkCount for the warning.
+  Leaving it open would leave a hole in the contract.
+
+  ---
+
+  ❓ Q9 - Which corrections go in API_DESIGN.md: I found these real "first
+  attempt was wrong" moments in the session exports and issues:
+  1. The brief's shapes (this session). I assumed Collection {id, name} and
+     Bookmark {id, url, title, notes, collectionId} because the brief wasn't in
+     the repo, and you corrected me with the real shapes. The fix is that the
+     write-up now quotes the brief's shape and states each change from it.
+  2. Silent sign-in (#13). We expected prompt=none to return login_required, or
+     to work in a hidden iframe. A real human sign-in returned consent_required,
+     which I checked against Auth0's docs. That's why tokens are kept in memory
+     only and there are no refresh tokens.
+  3. The archived attempt's 404 (#4). Its problem-details 404 repeated the path
+     in instance, so its planned "identical 404 for an ID you don't own vs a
+     made-up ID" test would have failed. The research review caught it, and the
+     fix is the constant 404 body.
+  4. The #13 research doc. A spec review found that it presented an inference as
+     fact ("SSO limitations no longer matter"), and that it silently dropped
+     the check that two sign-ins give distinct subs. Both were rewritten, and
+     the distinctness gap now links to #11.
+
+  Pick 2–3 of these.
+
+  ➡️ 1, 2 and 3. They cover a contract assumption, a tenant assumption and an
+  isolation bug. Each has clear evidence of how it was found.
+
+  ---
+
+  ❓ Q10 - /me in API_DESIGN.md: #6 is still open. How should API_DESIGN.md list
+  /me?
+
+  ➡️ List GET /me with its status codes (200 and 401), and mark the body
+  "pending #6", with the shell using email. Don't decide the fields here.
+
+  ---
+
+  ❓ Q11 - Non-JSON bodies: What happens when a write request isn't JSON?
+
+  ➡️ A write whose Content-Type isn't application/json gets a 415 problem+json.
+  Malformed JSON gets a 400.
+
+  ---
+
+  ❓ Q12 - Where the decisions are written:
+  - API_DESIGN.md: the contract reference, meaning the tables, shapes and codes.
+    It summarises and links the enforcement described in DECISION.md (#7)
+    instead of copying it.
+  - DECISION.md: gets a new "API contract" section with Decision, Why, Rejected
+    alternatives and Consequences for each #8 decision, including every change
+    from the brief's shapes.
+  - #1: gets a one-line summary.
+  - Other issues: #8 closes, and #9 is narrowed if you choose Q8 (a).
+
+  ➡️ As described above.
+
+✻ Brewed for 47s · done 8:50 PM
+
+❯ agree with all recommendations, except for 8:b. Don't understand Q9, ask me   
+  again with more detail. The decision is still written in DECISION.md whilte   
+  the API spec is written in API_DESIGN.md                                      
+
+⏺ Noted:
+  - Q8 → (b). API_DESIGN.md will say the on-delete behaviour is "pending #9",
+    and #9 stays fully open.
+  - Where things are written: decisions and their reasoning go in DECISION.md,
+    and the API spec goes in API_DESIGN.md.
+
+  Here's Q9 again with more detail. It's the only open question left.
+
+  ---
+
+  ❓ Q9 - Which mistakes should API_DESIGN.md describe?
+
+  What this is for. You asked for a section in API_DESIGN.md that describes 2–3
+  places where the AI agent's first attempt was wrong, and how each was found
+  and fixed. I shouldn't invent these, so I searched this project's session
+  exports and issues for real cases. Each candidate below shows what the agent
+  first believed, what turned out to be true, how that came to light, and what
+  changed.
+
+  Candidate 1: guessing the brief's data shapes (this session, #8)
+  - First attempt: the brief's text isn't in the repo, so I assumed Collection
+    {id, name} and Bookmark {id, url, title, notes, collectionId}, and started
+    the round 1 questions from that.
+  - What was true: the brief has Collection {id, name, ownerId, createdAt, 
+    updatedAt} and Bookmark {id, url, title, notes?, collectionId?, ownerId, 
+    createdAt, updatedAt}.
+  - How it was found: I flagged the assumption openly, and you corrected it with
+    the real shapes.
+  - What changed: API_DESIGN.md compares against the real shapes and lists each
+    change on purpose: ownerId is dropped from responses, bookmarkCount is
+    added, and notes is always a string.
+  - Lesson: don't design on top of a guessed input.
+
+  Candidate 2: how signing in again would work (#2 → #13)
+  - First attempt: early research expected the SPA to renew tokens without
+    asking the user again. The options were refresh tokens, or a hidden
+    prompt=none request that would at worst return login_required.
+  - What was true: a real person signed in against the tenant, and prompt=none
+    returned consent_required, even as a normal full-page redirect. The likely
+    cause is the localhost callback.
+  - How it was found: a throwaway sign-in page was built for the human test in
+    #13, and the odd result was checked against Auth0's documentation.
+  - What changed: tokens are kept in memory only, with no refresh tokens, and a
+    page reload means signing in again (the Auth section of DECISION.md).
+  - Lesson: only a real login proves how the tenant behaves.
+
+  Candidate 3: the archived attempt's 404 body (#4)
+  - First attempt: the earlier, abandoned project returned 404s in the
+    problem-details format, with instance set to the request path. It also
+    planned a test that the 404 for another Owner's ID is byte-for-byte the same
+    as the 404 for a made-up ID.
+  - What was true: the two paths contain different IDs, so the bodies would
+    differ and that test could never pass. It's a small leak of the kind the
+    privacy rule forbids.
+  - How it was found: the #4 research reviewed the archive's code and plan and
+    spotted the contradiction.
+  - What changed: every 404 now has one constant body with no instance and no
+    detail (Isolation section, #7).
+  - Lesson: it's directly about the privacy invariant, and about a test that
+    would have caught it.
+
+  Candidate 4: the #13 research write-up overstating things
+  - First attempt: the research doc said "SSO limitations no longer matter". It
+    also quietly dropped the question of whether two sign-ins produce two
+    different subs.
+  - How it was found: a spec-review pass compared the doc against the issue's
+    questions.
+  - What changed: the claim was reworded, and the missing check is now recorded
+    as "not tested" with a link to #11 (seeding two Users).
+  - Lesson: this one is about the process for writing documentation, less about
+    the API.
+
+  Which 2–3 should go in API_DESIGN.md?
+
+  ➡️ 1, 2 and 3.
+  - 1 is about the API contract itself.
+  - 2 shows an assumption about the tenant that only a real login could
+    disprove.
+  - 3 is a privacy-invariant bug that was caught before any code existed.
+
+  4 is the weakest example, because it concerns documentation, not the design.
+
+✻ Crunched for 19s · done 8:55 PM
+
+※ recap: We're settling the API contract for issue #8, and every question is answered except which 2–3 agent mistakes API_DESIGN.md should describe. Once you pick (I suggest 1, 2 and 3), I'll write API_DESIGN.md and update DECISION.md. (disable recaps in /config)
+
+❯ just 1                                                                        
+
+⏺ That closes the last open question. Before I write anything, here's the full
+  set of decisions to check.
+
+  Brief shapes and our changes
+  - The brief's shapes: Collection {id, name, ownerId, createdAt, updatedAt} and
+    Bookmark {id, url, title, notes?, collectionId?, ownerId, createdAt, 
+    updatedAt}.
+  - Our changes:
+    - ownerId is left out of responses, and sending it gets a 400.
+    - Collection gains bookmarkCount.
+    - notes is always a string, "" when there are none.
+
+  Fields
+  - url: checked with the standard (WHATWG) URL parser, http or https only, a
+    host is required, at most 2048 characters. It's trimmed and otherwise stored
+    as entered, and duplicate URLs are allowed.
+  - title: required, 1–200 characters after trimming.
+  - notes: at most 2000 characters, defaults to "", and stored exactly as sent.
+  - name: 1–100 characters after trimming, and unique per Owner regardless of
+    case. A clash returns 409.
+  - collectionId: a UUID or null, defaulting to null.
+  - createdAt and updatedAt: set by the server, in UTC.
+
+  Verbs
+  - PUT: replaces the whole resource, so every writable field is required. It
+    never creates a resource.
+  - PATCH: a partial update. An absent field stays unchanged, and collectionId: 
+    null moves the Bookmark to Uncategorised. null for any other field gets a
+    422, and an empty {} changes nothing.
+  - The SPA's edit dialogs use PUT.
+
+  Status codes
+  - Success: 201 with a Location header for creates, 200 for PUT and PATCH, 204
+    for DELETE.
+  - Errors: all bodies are problem+json (RFC 9457).
+    - 400: bad JSON, unknown fields, or a bad query param or cursor
+    - 415: a body that isn't JSON
+    - 422: invalid values, with errors[{pointer, detail}]
+    - 409: a Collection name clash
+    - 404: the constant body already decided
+    - 500: a generic error with no details
+
+  Lists
+  - Pagination: by cursor, with limit defaulting to 50 (maximum 100). Responses
+    are {items, nextCursor}. The cursor is unsigned base64url and never goes in
+    the SPA's URL. The SPA shows a "Load more" button.
+  - Sort order: Bookmarks newest first, by createdAt then id. Collections by
+    name ignoring case, then id.
+  - GET /bookmarks filters: collectionId=<uuid>|none and q, which searches title
+    and URL. A malformed collectionId gets a 404.
+  - GET /collections filter: q, which searches the name.
+  - GET /collections/:id/bookmarks: works exactly like
+    /bookmarks?collectionId=:id. Sending collectionId to it gets a 400.
+  - The SPA's URL uses the API's own parameter names.
+
+  Still open elsewhere
+  - What happens to Bookmarks when their Collection is deleted: marked "pending
+    #9".
+  - What GET /me returns: its codes are 200 and 401, and the body is marked
+    "pending #6".
+
+  Where it's written
+  - API_DESIGN.md holds the spec:
+    - resources, verbs, status codes, list and filter parameters, and the error
+      shape
+    - the Collection–Bookmark relation
+    - a summary of how the privacy rule is enforced in code, linking to
+      DECISION.md
+  - DECISION.md gets an "API contract" section with the reasoning.
+  - Issues: #1 gets a one-line summary, and #8 is closed.
+
+  The "first attempt was wrong" section covers only Candidate 1, where I guessed
+  the brief's shapes. Your instructions asked for 2–3 examples, so the section
+  will fall short of that on purpose. Is that what you want?
+
+  Does this match what you have in mind? Once you confirm, I'll write
+  API_DESIGN.md and the DECISION.md section, update #1 and close #8.
+
+✻ Sautéed for 15s · done 9:00 PM
+
+❯ yes, go ahead                                                                 
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Writing both documents now. First I'll add the reasoning section to
+  DECISION.md, then write the spec.
+
+  Read 1 file, ran 2 shell commands (ctrl+o to expand)
+
+⏺ Now the spec itself.
+
+⏺ Write(API_DESIGN.md)
+  ⎿  Wrote 223 lines to API_DESIGN.md
+      1 # API design
+      3 This is the contract for the bookmark manager API. The reasons be
+        hind it are in [DECISION.md](DECISION.md), and domain terms (User
+        d in [CONTEXT.md](CONTEXT.md).
+      5 - **Base URL:** `http://localhost:3001`. The SPA calls it from `h
+        ttp://localhost:3000`.
+        cess token>`, and there are no public routes. A missing or invali
+        d token gets a `401`. The token's `sub` is the caller's **Owner**
+      7 - **Format:** request and response bodies are JSON. Errors are `a
+      8 - **Spec:** the OpenAPI spec is generated with `@
+     … +338 lines (ctrl+o to expand)
+
+⏺ Both files are written. Next I'll update #1 and close #8.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ I wrote API_DESIGN.md and added the reasoning to DECISION.md. #8 is closed and
+  #1 has its one-line summary.
+
+  - API_DESIGN.md (new, at the repo root) covers:
+    - the two resources, including a table of changes from the brief's shapes
+    - every route with its status codes, and the request body rules
+    - the Collection–Bookmark relation, with the on-delete behaviour marked
+      "pending #9"
+    - list filters and pagination, and the error format with example bodies
+    - the seven ways the privacy invariant is enforced in code
+    - one "first attempt was wrong" section: the guessed brief shapes
+  - DECISION.md has a new "API contract" section with six decisions, and the
+    three places that said "follows #8" now link to it.
+
+  Writing it up exposed three build details that the design sessions hadn't
+  covered, so I recorded them in DECISION.md:
+  - createdAt needs millisecond precision in the database (timestamptz(3)).
+    JavaScript dates only hold milliseconds, so with Postgres's default
+    microsecond precision the cursor would skip or repeat rows.
+  - Prisma can't sort by name ignoring case, or build the case-insensitive 
+    unique index. The build still has to choose between a citext name column and
+    a generated sort-key column.
+  - The 415 check needs its own code. Otherwise Express ignores a body that
+    isn't JSON, and the request comes back as a 422 "missing field" error.
+
+  Nothing is committed yet. The earlier tickets were committed straight to main;
+  should I commit these two files the same way? Before this session ends, also
+  run /export so the session log is saved with the others.
+
+✻ Baked for 2m 21s · done 9:03 PM
+
+※ recap: We're settling the bookmark manager's API contract (#8): I wrote API_DESIGN.md and the API contract section in DECISION.md, and closed #8. Next, confirm whether to commit both files straight to main like earlier tickets. (disable recaps in /config)
+
+❯ yes, commit to main                                                           
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ I committed API_DESIGN.md and DECISION.md to main as a4d2d6b. Nothing else was
+  included, so the session exports and .claude/ are still uncommitted.
+
+  The commit isn't pushed yet, so local main is one commit ahead of origin/main.
+  Want me to push it?
+
+✻ Sautéed for 7s · done 9:10 PM
+
+❯ yes, push it                                                                  
+
+  Pushed to main (ctrl+o to expand)
+
+⏺ I pushed a4d2d6b to origin/main, and local main now matches the remote. It's
+  the commit with API_DESIGN.md and DECISION.md.
+
+  Before you finish, run /export so this session's log is saved with the others.
+✻ Brewed for 8s · done 9:10 PM

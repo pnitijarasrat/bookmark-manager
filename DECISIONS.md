@@ -595,3 +595,71 @@ Decided in [#9](https://github.com/pnitijarasrat/bookmark-manager/issues/9).
     3. Deleting A's Collection leaves B's Collections and Bookmarks unchanged.
     4. A second DELETE of the same ID gets a 404, and so does a non-UUID ID.
     5. The migration test above.
+
+---
+
+## Repo and tooling
+
+Decided in the pre-build grilling session (2026-09-16), tracked in [#1](https://github.com/pnitijarasrat/bookmark-manager/issues/1).
+
+### Layout
+
+- **Decision:** the repo layout is fixed by the brief:
+  - `backend/`: the NestJS API
+  - `frontend/`: the Vite SPA
+  - `transcripts/`: the agent session logs
+  - `CLAUDE.md`: the agent rules
+  - `DECISIONS.md`, `API_DESIGN.md` and `README.md` at the root
+
+  The brief's `/.agent/` folder is `.claude/`, because that is the only folder Claude Code reads. Its shareable parts (`commands/`, `agents/`, `settings.json`, `.mcp.json`) are committed. `.claude/worktrees/` and `settings.local.json` are ignored.
+- **Why:**
+  - **The brief fixes the layout.**
+  - **`backend/` and `frontend/` are separate packages** with no shared code. The API contract reaches the SPA through the generated OpenAPI spec (see [API types are generated from OpenAPI](#api-types-are-generated-from-openapi)).
+- **Rejected alternatives:**
+  - **An npm/pnpm workspace with a shared package.**
+  - **A real `/.agent/` folder with a symlink to `.claude/`.** It's fragile, and the link breaks on some checkouts.
+- **Consequences:** the README says that `.claude/` is the brief's `/.agent/`.
+
+### One-command local development
+
+- **Decision:**
+  - **Database:** `docker-compose.yml` runs Postgres 17.
+  - **Start:** the root `package.json` holds only scripts. `npm run dev` starts Postgres, runs the Prisma migrations and the seed, then starts `backend` (`:3001`) and `frontend` (`:3000`) together with `concurrently`.
+  - **Config:** each app has a committed `.env.example`, and real `.env` files are ignored. The API validates its config at startup and refuses to start if a value is missing or malformed.
+  - **Node:** 24 LTS, pinned with `.nvmrc` and `engines`.
+- **Why:**
+  - **A reviewer can run everything with one command.**
+  - **Postgres 15 or later is required** for `ON DELETE SET NULL (collection_id)`.
+  - **Checking config at startup** turns a wrong issuer or audience into a clear startup error, not a stream of 401s.
+- **Rejected alternatives:** running Postgres on the host, and starting each app by hand.
+- **Consequences:** Docker is a prerequisite, and the README says so.
+
+### Transcripts
+
+- **Decision:** logs go in `transcripts/<YYYY-MM-DD>-<topic>/`, with each session's `.jsonl` next to its `/export` text. Before a commit, `transcripts/scrub.py` redacts emails, JWT-shaped strings, OAuth `code`/`state`/`code_verifier` values and absolute home paths. It exits non-zero if anything that matches those patterns is left. Logs are committed at the end of each session.
+- **Why:** the logs are a deliverable, and this repo is public.
+- **Rejected alternatives:** committing logs unscrubbed, and redacting them by hand.
+- **Consequences:** the scrubber works on patterns, so a person still skims each log before committing it.
+
+---
+
+## HTTP hardening
+
+Decided in the pre-build grilling session (2026-09-16).
+
+### Headers, rate limiting and logging
+
+- **Decision:**
+  - **API headers:** `helmet` with its defaults. CORS is as decided under [Auth](#the-spa-is-the-oauth-client-pkce-s256-the-api-is-a-stateless-bearer-resource-server).
+  - **Rate limiting:** none.
+  - **Request logging:** each request logs its method, **route pattern** (for example `/bookmarks/:id`, never the real path or query string), status and duration. Request and response bodies, tokens, `sub` and database error details are never logged.
+  - **SPA:** a CSP `<meta>` tag whose `connect-src` allows only the API origin and the Auth0 tenant.
+- **Why:**
+  - **helmet costs nothing.**
+  - **The app only runs locally,** so rate limiting would protect nothing real.
+  - **Real paths and query strings contain IDs and search text,** and a log line shouldn't turn one Owner's data into something an operator can read.
+  - **The CSP limits where injected script could send a token.** This matters because tokens live in JavaScript memory.
+- **Rejected alternatives:**
+  - **`@nestjs/throttler` keyed by `sub`.**
+  - **Logging the full URL.**
+- **Consequences:** a real deployment would need rate limiting, and it's out of scope here. Auth0 rate-limits `/userinfo`, which is handled under `/me` ([#6](https://github.com/pnitijarasrat/bookmark-manager/issues/6)).

@@ -1,0 +1,555 @@
+ ▐▛███▛█   Claude Code v2.1.273
+▝▜██████▀  Opus 5 · Claude Pro
+  ▝▝ ▝▝    ~/personal/bookmark-manager
+
+
+❯ /clear                                                                        
+
+❯ /mattpocock-skills:grilling on #5                                             
+
+⏺ I'll start by reading issue #5 and the domain docs.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Facts I need live in #1, #2, #3, #4, #13 and the research doc. Reading them
+  now.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ I've read #5, its parent #1, the research tickets (#2, #3, #4, #13), the
+  sibling tickets #6 and #7, and docs/research/first-real-sign-in.md. These
+  facts limit what #5 can decide:
+
+  - The Auth0 client is public: it has no secret, PKCE S256 works with it, and
+    implicit sign-in is refused.
+  - http://localhost:3000 is the only allowed origin for the callback, the
+    logout return, CORS and the web origin.
+  - The access token is signed with RS256, has iss with a trailing slash, has an
+    aud array that includes /userinfo, has azp set to our client ID, carries
+    only sub as identity, and lasts 2 hours.
+  - The session can't be renewed without the user: there's no offline_access so
+    no refresh tokens, and silent sign-in returns consent_required.
+
+  Only question 1 below changes the rest of the tree: where tokens are stored,
+  how the SPA and API are laid out, how logout works, and whether the reload
+  problem goes away. Questions 2 and 3 don't depend on it, so I'm asking all
+  three now.
+
+  ---
+
+  ❓ Q1 - Where does the code exchange happen?
+
+  (A) SPA as a public client. @auth0/auth0-react runs PKCE in the browser and
+  holds the access token. It sends the token to the API as Authorization: Bearer
+  …, and the API only checks tokens.
+
+  (B) Backend-for-frontend (BFF). A server on port 3000 serves the SPA, handles
+  /callback, and exchanges the code itself. It still has to use the public
+  client with no secret, because that's how the tenant registers it. It keeps
+  the tokens in a server-side session and gives the browser an HttpOnly cookie.
+  - Gain: a page reload keeps you signed in for the token's 2-hour life, and no
+    token ever reaches JavaScript.
+  - Costs:
+    - a session store
+    - CSRF protection, because the cookie is sent automatically
+    - a proxy in front of the API
+    - /callback fixes the BFF to port 3000
+    - it uses a client registered as an SPA in a way it wasn't designed for,
+      which needs justifying in the write-up
+
+  ➡️ (A) SPA as a public client. The tenant registered exactly that kind of
+  client, and the SDK hardcodes S256. The API stays a plain resource server, and
+  the brief's "OIDC on every route" becomes "every request carries a verified
+  Bearer token", which is simple to test. The cost is the reload/persistence
+  trade-off, which I'll ask about next round. (B) would only be worth it if you
+  decide that "no token in JavaScript" and "survives a reload" both have to
+  hold.
+
+  ---
+
+  ❓ Q2 - What does the API accept, and how does it check tokens?
+
+  My proposed rule set uses jose's jwtVerify with the JWKS from
+  createRemoteJWKSet:
+  - algorithms: ['RS256'] only, so HS256 or PS256 tokens designed to trick the
+    check are rejected.
+  - issuer must be exactly https://dev-yg.us.auth0.com/, trailing slash
+    included.
+  - audience: 'https://bbl-candidate-test-api'. Because aud is an array, jose
+    checks that it contains this value.
+  - exp is required, with a small clock tolerance (e.g. 5 s).
+  - sub must be a non-empty string.
+  - The token is read from the Authorization: Bearer header only, never from a
+    query string or cookie.
+
+  Two parts are open:
+  - Check that azp equals our client ID? The audience name suggests it's shared
+    with other candidates' apps on this tenant. Those apps can get valid tokens
+    for the same audience.
+  - Check scope? The API defines no permissions, so there's nothing useful to
+    check.
+
+  ➡️ Yes to the azp check, no to the scope check. The azp check costs one line
+  and makes the API accept only tokens issued to this SPA. Don't pin the sub
+  format (auth0|…) in the guard. The guard's job is to check the token, and
+  which Owners exist is the data layer's business.
+
+  ---
+
+  ❓ Q3 - How is "OIDC on every route" enforced?
+
+  My proposal is a global Nest APP_GUARD that denies by default, with no
+  @Public() decorator in the codebase at all. There would be no public routes,
+  not even a health check.
+
+  Two parts are open:
+  - Health check: have none, or have a public /health? Docker Compose can check
+    Postgres itself, so the API doesn't need one for local development.
+  - Unmatched paths: Nest returns 404 for an unknown path before any guard runs,
+    so an unauthenticated caller can tell which routes exist. The options are
+    to accept that, or to add a guarded catch-all so everything returns 401
+    without a token.
+
+  ➡️ No health endpoint and no opt-out decorator. Accept 404 before 401 for 
+  unknown paths. The route list is in a public repo, so hiding it gains nothing.
+  Isolation is about Owners' data, not route names. The guard-coverage test can
+  list every registered route and check that each one returns 401 without a
+  token. That turns "every route" into a proven fact rather than a code
+  convention.
+
+  I'll add the justification for PKCE over implicit to the Decisions write-up
+  once the tree is settled; it isn't a decision you need to make.
+
+✻ Brewed for 1m 13s · done 5:49 PM
+
+❯ Q1: (A)                                                                       
+  Q2: Access Token                                                              
+  Q3: APP_GUARD, the rest as you suggest                                        
+
+⏺ Noted: the SPA is a public client (A), the API accepts only the access token,
+  and a global APP_GUARD has no opt-out, no health route, and returns 404 before
+  401 for unknown paths.
+
+  For Q2, one part is still open: you said the API accepts the access token, but
+  not whether to add the azp check. I'm asking it again as Q4.
+
+  ---
+
+  ❓ Q1 - How are tokens kept between page reloads?
+
+  Tokens can't be renewed silently, so every option ends with an interactive
+  Universal Login at some point. The choice is when that happens.
+
+  - (a) Memory only, the SDK default. Any reload or new tab sends you back to
+    Universal Login. JavaScript loaded after an XSS can't read old tokens from
+    storage.
+  - (b) cacheLocation: 'localstorage'. The token survives reloads and tabs until
+    it expires after 2 hours. Any XSS can read it and use it for up to 2 hours.
+  - (c) A custom sessionStorage cache. The token survives reloads in the same
+    tab and is cleared when the tab closes. XSS can read it just as in (b).
+
+  One fact is missing, and only a human can check it. In #13 we tested only
+  prompt=none. We don't know whether an interactive redirect to Universal Login,
+  made right after signing in, asks for the password again or signs you
+  straight back in, perhaps after one click on the localhost confirmation. That
+  decides how much (a) actually costs.
+
+  ➡️ (a) Memory only. This project is judged on data isolation, and "no token in
+  storage that XSS can read" is an easy rule to defend. The re-login on reload
+  is a cost we name in the Decisions write-up, and it follows from facts about
+  the tenant that we can't change. If the redirect check shows you have to type
+  the password on every reload, I'd switch to (c). (b) keeps a token that gives
+  up to 2 hours of access in every tab, and nothing needs that.
+
+  ---
+
+  ❓ Q2 - Where does the API run, and how does the SPA reach it?
+
+  - (a) The API runs on http://localhost:3001. CORS allows exactly the origin
+    http://localhost:3000, with Authorization and Content-Type headers, no
+    credentials, and only the methods we use.
+  - (b) A Vite dev proxy on port 3000 forwards /api to the API, so the browser
+    sees a single origin and no CORS rules are needed.
+
+  ➡️ (a). It reflects the real setup, which is two origins with a Bearer token
+  and no cookies. Exact-origin CORS is an easy item to show in the hardening
+  story. A proxy only exists in development, so it would hide the real setup.
+
+  ---
+
+  ❓ Q3 - Which Auth0 SDK does the SPA use?
+
+  React Router data mode runs loaders and actions outside React, so they can't
+  use useAuth0().
+
+  - (a) Use @auth0/auth0-spa-js directly. A single Auth0Client lives in a
+    module, and loaders call await client.getTokenSilently(). A small React
+    context shows the user and the login and logout buttons.
+  - (b) Use @auth0/auth0-react, and pass its getAccessTokenSilently to the
+    router from inside the provider.
+
+  ➡️ (a). There's one client object, loaders can use it directly, and the React
+  wrapper adds nothing we need. The PKCE S256 and in-memory cache settings are
+  the same, because auth0-react is only a wrapper around this library.
+
+  ---
+
+  ❓ Q4 - Does the API check that azp is our client ID?
+
+  The audience name bbl-candidate-test-api suggests other apps on this tenant
+  can get tokens for the same API. Checking azp means the API accepts only
+  tokens issued to our SPA.
+
+  ➡️ Yes. The API rejects the token unless azp === 
+  'H9F6QG5SzTKMv0tbmgxLj9LjG1EKVllA'. The client ID comes from config, like the
+  issuer and audience.
+
+  ---
+
+  ❓ Q5 - What happens when the token expires or the API returns 401?
+
+  After 2 hours, or after any reload if you pick memory-only in Q1,
+  getTokenSilently fails with consent_required or login_required.
+
+  ➡️ Treat any failure from getTokenSilently, and any 401 from the API, the same
+  way:
+  - Call loginWithRedirect with appState: { returnTo: <current path> }.
+  - /callback handles the redirect back and sends you to returnTo. Only same-app
+    relative paths are allowed there, so it can't be used as an open redirect.
+
+  There's no retry loop and no "session expired" page.
+
+  ---
+
+  ❓ Q6 - How does logout work?
+
+  ➡️ Call client.logout({ logoutParams: { returnTo: 'http://localhost:3000' } 
+  }). This clears the in-memory cache and goes through Auth0's /v2/logout, which
+  ends the Auth0 session.
+  - Nothing happens on the API side. It keeps no session state, and Auth0 JWTs
+    can't be revoked. A token copied before logout keeps working until it
+    expires, at most 2 hours later.
+  - The write-up states that limit openly. It's the trade-off of a stateless API
+    that only checks tokens.
+
+✻ Cogitated for 32s · done 5:52 PM
+
+❯ Q1: memory                                                                    
+  Q2: (a)                                                                       
+  Q3: (b)                                                                       
+  Q4: Yes, verify that with proof                                               
+  Q5: drop this by now                                                          
+  Q6: as you suggest.                                                           
+
+⏺ Recorded so far:
+  - Token storage: tokens stay in memory only.
+  - API: runs on :3001, with CORS allowing exactly http://localhost:3000.
+  - SPA: uses @auth0/auth0-react.
+  - azp: the API checks it, and a test must prove it.
+  - Expiry and 401 handling: set aside for now. I'll record it as an open item
+    for #12, not a decision.
+  - Logout: SDK logout returning to http://localhost:3000. The API side does
+    nothing, and the 2-hour limit is stated in the write-up.
+
+  Choosing auth0-react raises a follow-up question, so it goes first below.
+
+  ---
+
+  ❓ Q1 - How do React Router loaders get the access token?
+
+  getAccessTokenSilently is only available from the hook, but loaders run
+  outside React. Options:
+  - (a) Create the router inside a component under <Auth0Provider>, e.g.
+    useMemo(() => createBrowserRouter(routes), []). Pass the token getter in
+    through React Router 8's router context, and loaders read it from their
+    context argument.
+  - (b) Wrap the provider: a small component inside <Auth0Provider> saves
+    getAccessTokenSilently into a module variable, and an apiFetch() helper
+    reads it from there.
+  - (c) Loaders don't fetch at all. Components fetch through a useApi() hook, so
+    the data-mode loaders are left unused.
+
+  ➡️ (a). The getter is passed in explicitly, so there's no hidden module state
+  and tests can pass a fake getter. The exact router-context API shape in 8.4
+  should be checked when #12 is built. Or leave the whole question to #12 
+  (Frontend structure), since it's about how the frontend is organised rather
+  than how tokens move.
+
+  ---
+
+  ❓ Q2 - What does a signed-out visitor see, and how is /callback handled?
+
+  ➡️ Two parts:
+  - Signed-out visitors: every page except /callback is behind
+    withAuthenticationRequired. A signed-out visit to /collections goes straight
+    to Universal Login, so there's no public landing page. This mirrors "no
+    public routes" on the API.
+  - /callback:
+    - redirect_uri is http://localhost:3000/callback.
+    - /callback shows only a spinner.
+    - onRedirectCallback sends the user on to appState.returnTo if it's a
+      relative path inside the app, and to /collections otherwise.
+    - The Auth0Provider settings are authorizationParams: { audience, scope: 
+      'openid profile email', redirect_uri }, with the in-memory cache and no
+      useRefreshTokens.
+
+  ---
+
+  ❓ Q3 - What proof shows the token checks work, azp included?
+
+  ➡️ The API gets token-rule tests that go through HTTP.
+  - Setup: a fake identity provider publishes a JWKS with two RS256 keys and
+    serves it to the guard. Real jose code checks the tokens.
+  - Accepted: a correct token signed with either published key gets a 200 on an
+    authenticated route.
+  - Rejected with 401, one test per case:
+    - no header
+    - a Bearer scheme that isn't Bearer, or a malformed token
+    - a wrong azp
+    - a missing azp
+    - a wrong iss, including one without the trailing slash
+    - an aud missing our API
+    - an expired token
+    - a token with no sub
+    - alg HS256 signed with the public key as the secret
+    - alg PS256
+    - alg: none
+    - a kid that isn't published
+    - a valid shape signed with an unpublished key
+    - a token sent as a query parameter or a cookie
+  - Every route: a separate test lists every registered route and checks that
+    each one returns 401 without a token.
+  - The real token: #13 already recorded that its azp is our client ID, so we're
+    checking the value real sign-ins actually carry.
+
+  ---
+
+  ❓ Q4 - Where are these decisions recorded?
+
+  docs/adr/ doesn't exist yet. docs/agents/domain.md says ADRs go there.
+
+  ➡️ Record them in two places:
+  - Two ADRs:
+    - "SPA public client + stateless Bearer API (PKCE S256, no BFF)", including
+      why PKCE and not implicit: there's no token in the URL fragment or browser
+      history, the stolen-code attack is prevented, implicit is refused by the
+      tenant, and OAuth 2.1 and BCP 212 no longer allow it.
+    - "Memory-only tokens; re-login on reload", covering the missing refresh
+      tokens, consent_required, and the rejected BFF and localStorage options.
+  - A resolution comment on #5 that lists the settled rules, including the token
+    rule set and "no public routes".
+  - The #1 Decisions line gets updated too.
+
+  No CONTEXT.md changes are needed, because no new domain terms came up.
+
+✻ Crunched for 24s · done 5:56 PM
+
+❯ Q1: (a)                                                                       
+  Q2: a signed-out visitor should see the login page of the application         
+  Q3: drop this, why are we talking about azp when I say I want to use Access   
+  Token as the Bearer.                                                          
+  Q4: create DECISION.md file at root                                           
+
+⏺ Noted: loaders get the token getter through the router context (Q1 a), and
+  decisions are recorded in DECISION.md at the repo root. I've dropped the proof
+  question.
+
+  On azp: I brought it up because it isn't a separate token. It's a claim inside
+  the access token, which names the client the token was issued to. Checking it
+  is one more rule the API applies to the Bearer access token, next to iss and
+  aud. In round 2 you said "yes, with proof", and now you've said to drop the
+  topic, so Q1 asks you to settle whether the check stays at all.
+
+  ---
+
+  ❓ Q1 - Does the API check the access token's azp claim?
+
+  - (a) Yes. The API rejects any access token whose azp isn't our client ID, so
+    tokens issued to other apps on this tenant are refused.
+  - (b) No. The API checks only signature, alg, iss, aud and exp, plus sub, on
+    the Bearer access token.
+
+  ➡️ (a), as one extra check in the same place as the others, with no separate
+  proof work. If you'd rather keep the rules minimal, (b) is still a valid
+  choice, and its risk (another app's token being accepted) goes in the
+  write-up.
+
+  ---
+
+  ❓ Q2 - What does the app's own login page do?
+
+  ➡️ The page itself:
+  - Where it lives: a public SPA route at /login, with the app name and one MUI
+    "Sign in" button.
+  - What the button does: calls loginWithRedirect, which goes to Universal
+    Login, where the password is entered. The login form isn't built in our app:
+    the tenant refuses the password grant, so it can't be.
+  - Other public routes: only /login and /callback.
+
+  Redirects:
+  - Signed-out visitors: any other page sends them to /login?returnTo=<path>.
+  - After sign-in: /callback sends the user to returnTo if it's a path inside
+    the app, and to /collections otherwise.
+  - Signed-in users: visiting /login sends them to /collections.
+
+  After logout: Auth0 returns to http://localhost:3000 (fixed by the tenant),
+  and / sends signed-out users to /login, so logout ends on the login page.
+
+  ---
+
+  ❓ Q3 - How is DECISION.md laid out?
+
+  ➡️ Layout:
+  - Sections: one per decision, each with Decision, Why, Rejected alternatives
+    and Consequences.
+  - Grouping: by area (Auth, Isolation, Data model, …), so #6–#12 add their own
+    sections later.
+  - What #5 adds under Auth:
+    - SPA public client with PKCE S256 and a stateless Bearer API. The BFF is
+      the rejected alternative, and it includes why PKCE was chosen over
+      implicit.
+    - The rules for checking the access token.
+    - Global APP_GUARD with no public API routes.
+    - Memory-only tokens, so a reload means signing in again.
+    - SDK and router wiring, with the /login page.
+    - Logout, and the fact that tokens can't be revoked.
+    - An Open note saying expiry and 401 handling is deferred to #12.
+
+  Earlier decisions: "no User table" and "Universal Login only, no
+  offline_access" from #13 also belong in this file, so it's the one complete
+  write-up.
+
+  Also: a resolution comment on #5 that links to DECISION.md, and a new line in
+  #1's "Decisions so far".
+
+✻ Cooked for 16s · done 6:00 PM
+
+❯ Q1: (b)                                                                       
+  Q2, 3: as you propose                                                         
+
+⏺ Nothing is left open on #5. Here's the full picture; please confirm it before
+  I write anything.
+
+  Where tokens flow
+  - Client: the SPA is a public client. @auth0/auth0-react runs PKCE S256 in the
+    browser, and there's no BFF.
+  - Scope and refresh: the scope is openid profile email, with no offline_access
+    and so no refresh tokens.
+  - Why PKCE and not implicit: the token never appears in the URL fragment, a
+    stolen code is useless without the verifier, the tenant refuses implicit,
+    and OAuth 2.1 and BCP 212 no longer allow it.
+
+  What the API accepts
+  - Where it runs: http://localhost:3001. CORS allows exactly
+    http://localhost:3000, with Authorization and Content-Type headers and no
+    credentials.
+  - What it checks: only the access token, sent as Authorization: Bearer. jose
+    verifies it with these rules:
+    - RS256 only, against the tenant's published keys (JWKS)
+    - iss exactly https://dev-yg.us.auth0.com/
+    - aud includes https://bbl-candidate-test-api
+    - exp checked
+    - sub required
+  - Not checked: azp and scope. The risk that another app's token for the same
+    audience is accepted goes in the write-up.
+
+  How every route is protected
+  - API: a global APP_GUARD with no opt-out decorator and no public routes, not
+    even a health check. Unknown paths return 404 before any 401, which is
+    acceptable because the repo is public.
+  - SPA: the only public routes are /login and /callback.
+    - /login has one "Sign in" button, which goes to Universal Login.
+    - Any other page sends a signed-out visitor to /login?returnTo=<path>.
+    - /callback sends the user to returnTo if it's a path inside the app, and to
+      /collections otherwise.
+    - A signed-in user who opens /login goes to /collections.
+
+  Storage, loaders, logout
+  - Storage: tokens are cached in memory only, so a reload means signing in
+    again. That's a cost we name, caused by the missing refresh tokens and the
+    consent_required result.
+  - Loaders: the router is created under <Auth0Provider>, and loaders get
+    getAccessTokenSilently through React Router 8's router context. The exact
+    API gets checked when #12 is built.
+  - Logout: SDK logout returns to http://localhost:3000, which sends signed-out
+    users to /login. The API does nothing on logout, and an issued token stays
+    valid for up to 2 hours, which the write-up says openly.
+
+  Left open: what happens when the token expires or the API returns 401 is
+  deferred to #12.
+
+  Recording plan (once you confirm)
+  1. DECISION.md at the repo root:
+     - It's grouped by area, and each decision has Decision, Why, Rejected
+       alternatives and Consequences.
+     - The Auth section covers everything above.
+     - The #13 decisions go in too: no User table, and Universal Login only
+       without offline_access.
+  2. Resolution comment on #5 linking to DECISION.md, then close #5.
+  3. One new line in #1's "Decisions so far".
+
+  Is this our shared understanding? If so, I'll write and commit DECISION.md and
+  update the issues.
+
+✻ Baked for 11s · done 6:02 PM
+
+❯ yes, go ahead                                                                 
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The #13 work was committed straight to main and pushed, so I'll do the same
+  here so the link in the #5 comment works.
+
+⏺ Write(DECISION.md)
+  ⎿  Wrote 140 lines to DECISION.md
+      1 # Decisions
+      3 The justification for every design choice in the private bookmark
+         manager. Domain terms (User, Owner, Collection, Bookmark) are de
+        tps://github.com/pnitijarasrat/bookmark-manager/issues/1).
+      4 
+        lternatives** and **Consequences**. Sections are grouped by area.
+         Areas not listed yet are still being decided.
+      7 **Fixed inputs.** The brief and the Auth0 tenant are given and ar
+        en't up for debate. The tenant (`dev-yg`) has a public SPA client
+        origin and web origin is `http://localhost:3000`.
+     … +256 lines (ctrl+o to expand)
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+⏺ I've written DECISION.md at the repo root and closed #5 with a comment linking
+  to it. The file is committed (bd80580) and pushed straight to main, following
+  how the #13 work was done.
+
+  In DECISION.md: each decision has Decision, Why, Rejected alternatives and
+  Consequences, grouped by area.
+  - Identity: the two decisions from #13, "Universal Login only, no
+    offline_access" and "no User table, the Owner is the Auth0 sub".
+  - Auth:
+    - Flow: the SPA runs PKCE S256 itself (no BFF), including why PKCE and not
+      implicit.
+    - Token checks: the API checks the Bearer access token for RS256, the exact
+      issuer, an aud that includes our API, expiry and sub. It doesn't check
+      azp, and the file says openly that a token another app gets for the same
+      API would be accepted.
+    - Every route: a global APP_GUARD with no public API routes.
+    - Storage: tokens are kept in memory only, so a reload means signing in
+      again.
+    - SPA setup: the router is created under <Auth0Provider>; /login and
+      /callback are the only public pages.
+    - Logout: the file notes that a token copied before logout stays valid for
+      up to 2 hours.
+  - Open: what the SPA does when a token expires or the API returns 401 is left
+    to #12.
+
+  #1 now has a line for #5 under "Decisions so far". Its "Decisions write-up"
+  item says the write-up is DECISION.md; the README and where the threat model
+  goes are still open.
+
+  One thing is still unchecked: the exact React Router 8.4 API for passing the
+  token getter to loaders needs confirming when #12 is built.
+
+  Two dated session-log .txt files in the repo root are still uncommitted. They
+  should be scrubbed and committed with this session's /export; run /export
+  before you finish.
+
+✻ Baked for 1m 25s · done 6:04 PM

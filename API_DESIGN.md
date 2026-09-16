@@ -1,6 +1,6 @@
 # API design
 
-This is the contract for the bookmark manager API. The reasons behind it are in [DECISION.md](DECISION.md), and domain terms (User, Owner, Collection, Bookmark, Uncategorised Bookmark) are defined in [CONTEXT.md](CONTEXT.md).
+This is the contract for the bookmark manager API. The reasons behind it are in [DECISIONS.md](DECISIONS.md), and domain terms (User, Owner, Collection, Bookmark, Uncategorised Bookmark) are defined in [CONTEXT.md](CONTEXT.md).
 
 - **Base URL:** `http://localhost:3001`. The SPA calls it from `http://localhost:3000`.
 - **Auth:** every route requires `Authorization: Bearer <Auth0 access token>`, and there are no public routes. A missing or invalid token gets a `401`. The token's `sub` is the caller's **Owner**.
@@ -96,7 +96,7 @@ A path `:id` that isn't a UUID gets a `404` before any query runs. A second DELE
 - **Same Owner:** a Bookmark and its Collection always have the same Owner. Two things guarantee it:
   1. Before a write with a `collectionId`, the repository looks up the Collection, scoped to the Owner, and answers `404` if it isn't found.
   2. A composite foreign key, `Bookmark(collection_id, owner_id) → Collection(id, owner_id)`, backed by the unique key on `Collection(id, owner_id)`. If the Collection is deleted between the check and the write, the foreign key fails (Prisma `P2003`), and the repository maps that to the same `404`.
-- **On delete:** deleting a Collection makes its Bookmarks Uncategorised. It never deletes a Bookmark, and there's no soft delete or undo ([DECISION.md](DECISION.md#deleting-a-collection-keeps-its-bookmarks)).
+- **On delete:** deleting a Collection makes its Bookmarks Uncategorised. It never deletes a Bookmark, and there's no soft delete or undo ([DECISIONS.md](DECISIONS.md#deleting-a-collection-keeps-its-bookmarks)).
   - The composite foreign key is `ON DELETE SET NULL (collection_id)` (Postgres 15+), so `owner_id` is never nulled. Prisma's schema can't express this, so the migration is hand-edited, and a migration test protects it.
   - The repository runs one `delete({ where: { id_ownerId: { id, ownerId } } })`. The database moves the Bookmarks in the same statement, so their `updatedAt` stays the same.
 
@@ -169,7 +169,7 @@ Every error is `application/problem+json` ([RFC 9457](https://www.rfc-editor.org
 
 ## 6. How the privacy invariant is enforced in code
 
-The invariant from the brief (§3) is that a User can never see, change, or learn that another Owner's data exists. It's enforced in these layers, and each is explained in full under [DECISION.md → Isolation](DECISION.md#isolation).
+The invariant from the brief (§3) is that a User can never see, change, or learn that another Owner's data exists. It's enforced in these layers, and each is explained in full under [DECISIONS.md → Isolation](DECISIONS.md#isolation).
 
 1. **Every request has an Owner.** A global Nest `APP_GUARD` verifies the access token with `jose`:
    - RS256 only
@@ -211,7 +211,7 @@ How isolation is *proven* (cross-Owner tests and a threat model) is decided in [
 - **How it was found:** the agent stated the assumption openly at the top of the round and asked for the real text. The human replied with the actual shapes and told it not to assume.
 - **How it was corrected:**
   - The design was redone against the real shapes.
-  - Every difference is now an explicit, justified change (the table in [§1](#changes-from-the-briefs-suggested-shapes) and [DECISION.md → Changes from the brief's suggested shapes](DECISION.md#changes-from-the-briefs-suggested-shapes)):
+  - Every difference is now an explicit, justified change (the table in [§1](#changes-from-the-briefs-suggested-shapes) and [DECISIONS.md → Changes from the brief's suggested shapes](DECISIONS.md#changes-from-the-briefs-suggested-shapes)):
     - `ownerId` is dropped from responses.
     - `bookmarkCount` is added.
     - `notes` is always a string.
