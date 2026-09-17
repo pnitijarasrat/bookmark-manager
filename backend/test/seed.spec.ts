@@ -174,6 +174,18 @@ describe('seed()', () => {
     expect({ a: await snapshot(a.sub), b: await snapshot(b.sub) }).toEqual(before);
   });
 
+  it('seeds each Owner once when two runs overlap', async () => {
+    const [a, b] = [await api.owner(), await api.owner()];
+    const reports = await Promise.all([
+      seed(prisma, { ownerA: a.sub, ownerB: b.sub }),
+      seed(prisma, { ownerA: a.sub, ownerB: b.sub }),
+    ]);
+
+    expect(reports.flat().filter((line) => line.endsWith('seeded.'))).toHaveLength(2);
+    expect((await rowsOf(a.sub)).collections).toEqual(['Reading', 'Recipes']);
+    expect((await rowsOf(b.sub)).collections).toEqual(['Owner B only', 'reading']);
+  });
+
   it('seeds only B when there is no A', async () => {
     const b = await api.owner();
     await seed(prisma, { ownerB: b.sub });
@@ -199,6 +211,19 @@ describe('reset()', () => {
     expect(second).toEqual(first);
     expect(first.a.bookmarks.map((bm) => bm.url)).not.toContain('https://extra.test');
     expect(await snapshot(third.sub)).toEqual(thirdBefore);
+  });
+
+  it('gives the same rows when two resets overlap', async () => {
+    const [a, b] = [await api.owner(), await api.owner()];
+    await seed(prisma, { ownerA: a.sub, ownerB: b.sub });
+    const expected = { a: await rowsOf(a.sub), b: await rowsOf(b.sub) };
+
+    await Promise.all([
+      reset(prisma, { ownerA: a.sub, ownerB: b.sub }),
+      reset(prisma, { ownerA: a.sub, ownerB: b.sub }),
+    ]);
+
+    expect({ a: await rowsOf(a.sub), b: await rowsOf(b.sub) }).toEqual(expected);
   });
 
   it('rebuilds an Owner who had no rows', async () => {

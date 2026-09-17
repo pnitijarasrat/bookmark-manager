@@ -7,7 +7,14 @@ import { PrismaClient, type Prisma } from '../src/generated/prisma/client.js';
 //   npm run db:seed:reset    deletes and re-creates the seed Owners' rows
 //
 // Owner A is the tenant's test user, from SEED_OWNER_A_SUB. Owner B can never
-// sign in: B's rows exist to show what A must never see.
+// sign in: B's rows exist to show what A must never see. To count each
+// Owner's rows (the README from #23 will carry this too):
+//
+//   docker compose exec postgres psql -U bookmarks -d bookmarks -c "SELECT owner_id,
+//     (SELECT count(*) FROM collections c WHERE c.owner_id = o.owner_id) AS collections,
+//     (SELECT count(*) FROM bookmarks b WHERE b.owner_id = o.owner_id) AS bookmarks
+//     FROM (SELECT owner_id FROM collections UNION SELECT owner_id FROM bookmarks) o
+//     ORDER BY owner_id"
 
 export const OWNER_B = 'auth0|000000000000000000000000';
 
@@ -78,6 +85,12 @@ async function insert(tx: Tx, ownerId: string, data: SeedData) {
   });
 }
 
+// Holds until the transaction ends, so overlapping runs (two `npm run dev`
+// started together) take turns on each Owner instead of both writing.
+async function lock(tx: Tx, ownerId: string) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'seed:' + ownerId}))`;
+}
+
 async function remove(tx: Tx, ownerId: string) {
   await tx.bookmark.deleteMany({ where: { ownerId } });
   await tx.collection.deleteMany({ where: { ownerId } });
@@ -97,6 +110,7 @@ export async function seed(prisma: PrismaClient, owners: SeedOwners): Promise<st
   const report: string[] = [];
   for (const { label, ownerId, data } of ownersToSeed(owners)) {
     const seeded = await prisma.$transaction(async (tx) => {
+      await lock(tx, ownerId);
       const [collections, bookmarks] = await Promise.all([
         tx.collection.count({ where: { ownerId } }),
         tx.bookmark.count({ where: { ownerId } }),
@@ -114,6 +128,7 @@ export async function seed(prisma: PrismaClient, owners: SeedOwners): Promise<st
 export async function reset(prisma: PrismaClient, owners: SeedOwners): Promise<string[]> {
   const list = ownersToSeed(owners);
   await prisma.$transaction(async (tx) => {
+    for (const { ownerId } of list) await lock(tx, ownerId);
     for (const { ownerId } of list) await remove(tx, ownerId);
     for (const { ownerId, data } of list) await insert(tx, ownerId, data);
   });
