@@ -95,7 +95,10 @@ Decided in [#5](https://github.com/pnitijarasrat/bookmark-manager/issues/5).
 - **Rejected alternatives:**
   - **A public `/health`.** Docker Compose can check Postgres directly, and the API needs no health route for local development.
   - **A guarded catch-all so unknown paths also return 401.**
-- **Consequences:** Nest returns 404 for an unknown path before any guard runs, so an unauthenticated caller can tell which routes exist. We accept this, because the route list is in this public repo. The isolation promise is about Owners' data, not route names.
+- **Consequences:**
+  - Nest returns 404 for an unknown path before any guard runs, so an unauthenticated caller can tell which routes exist. We accept this, because the route list is in this public repo. The isolation promise is about Owners' data, not route names.
+  - JSON bodies are parsed before the guard runs, so an unauthenticated request with malformed JSON gets a 400, not a 401. The 400 body is the constant problem+json and reveals nothing.
+  - Tests swap the tenant's remote key set for an in-process one with two keys (the `JWKS` provider). That leaves the fetching of the real tenant's keys unproven, which a manual smoke run against the tenant covers ([#10](https://github.com/pnitijarasrat/bookmark-manager/issues/10)).
 
 ### Tokens are kept in memory only
 
@@ -676,4 +679,6 @@ Decided in the pre-build grilling session (2026-09-16).
 - **Rejected alternatives:**
   - **`@nestjs/throttler` keyed by `sub`.**
   - **Logging the full URL.**
-- **Consequences:** a real deployment would need rate limiting, and it's out of scope here. Auth0 rate-limits `/userinfo`, which is handled under `/me` ([#6](https://github.com/pnitijarasrat/bookmark-manager/issues/6)).
+- **Consequences:**
+  - A request that matches no route (an unknown path, a CORS preflight or a body that fails to parse) logs `(unmatched)` in place of the pattern.
+  - A real deployment would need rate limiting, and it's out of scope here. Auth0 rate-limits `/userinfo`, which is handled under `/me` ([#6](https://github.com/pnitijarasrat/bookmark-manager/issues/6)).
