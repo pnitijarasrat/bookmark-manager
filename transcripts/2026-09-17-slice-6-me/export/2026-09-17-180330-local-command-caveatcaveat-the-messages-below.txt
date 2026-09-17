@@ -1,0 +1,32 @@
+ ▐▛███▛█   Claude Code v2.1.273
+▝▜██████▀  Opus 5 · Claude Pro
+  ▝▝ ▝▝    ~/personal/bookmark-manager
+
+
+❯ /clear                                                                        
+
+❯ /code-review medium feat/22-me                                                
+  ⎿  Running in the background as @code-review
+
+⏺ Agent "/code-review medium feat/22-me" finished · 33s
+
+⏺ Code review(medium · 0 findings)
+
+⏺ The medium-level review of feat/22-me found no bugs. It read every source
+  change in the diff against main, but not the transcripts or generated files.
+
+  A few things that could look like bugs are fine:
+  - Token guard: the guard requires exp, so payload.exp! can't be missing.
+  - Userinfo cache: a failed call is removed from the cache without removing a
+    newer entry. An expired token isn't cached, and its request is still
+    awaited, so there's no unhandled error.
+  - Errors from /userinfo: a 401 becomes 401 and other failures become 502, as
+    DECISIONS.md says. The response never includes sub.
+  - Signed-in email in the shell: the shell doesn't reload /me on later page
+    changes, which is the choice recorded in DECISIONS.md. One side effect: if
+    the first /me call fails for a temporary reason, the email stays hidden
+    until the page is reloaded. The design accepts this.
+
+  The branch is ready to merge.
+
+✻ Sautéed for 8s · done 6:03 PM
