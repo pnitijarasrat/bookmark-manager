@@ -21,5 +21,6 @@ The source of truth is `DECISIONS.md` (why) and `API_DESIGN.md` (the contract). 
 - **Another Owner's resource is always the constant 404** (never 403, never an empty list, never a 422). No response contains `ownerId` or `sub`.
 - **Every route needs a token.** There is no `@Public()` and no health route.
 - **Version pins (from #3):** Node 24, TypeScript 6.0.3, `prisma` and `@prisma/client` 7.10.0 (the CLI's `latest` tag is an 8.0 RC), only `react-router` 8.4 (no `react-router-dom`), `@types/node` 24.x.
-- **Never commit** tokens, emails, `.env` files or unscrubbed transcripts. Run `python3 transcripts/scrub.py` on logs before committing them.
+- **Never commit** tokens, emails or `.env` files in source.
+- **Session logs:** commit them as they are; don't scrub them.
 - **Layout:** `backend/`, `frontend/`, `transcripts/`. `.claude/` is the brief's `/.agent/`.

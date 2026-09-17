@@ -113,7 +113,8 @@ Decided in [#5](https://github.com/pnitijarasrat/bookmark-manager/issues/5).
 ### How the SPA is wired up and the login page
 
 - **Decision:**
-  - **Router setup:** the React Router 8 data router is created inside a component under `<Auth0Provider>`, and passes `getAccessTokenSilently` to loaders and actions through the router context. The exact router-context API in 8.4 gets checked during the build.
+  - **Router setup:** the React Router 8 data router is created inside a component under `<Auth0Provider>`, and passes `getAccessTokenSilently` to loaders and actions through the router context.
+  - **The router-context API in 8.4 (checked in [#21](https://github.com/pnitijarasrat/bookmark-manager/issues/21)):** `createContext<T>()` makes a typed key. `createBrowserRouter(routes, { getContext })` takes a `getContext: () => RouterContextProvider`, and loaders, actions and middleware read the value with `context.get(key)`. Middleware is always on in v8 (no future flag). The installed `react-router@8.4.0` calls `getContext` again for **every navigation and every fetcher call** (`lib/router/router.js`), not once. So `frontend/src/App.tsx` builds one `AuthSession` object (`isAuthenticated`, `getAccessToken`, `clearSession`, made by `auth/auth0-session.ts`) when it creates the router, and `getContext` wraps it in a fresh provider each time. The router is made exactly once: `createBrowserRouter` starts loading straight away, and StrictMode calls a `useState` initializer twice in development, so the initializer only returns a getter that makes the router on first use (fixed after the review of [#21](https://github.com/pnitijarasrat/bookmark-manager/issues/21)). `createMemoryRouter` takes the same option, which the tests use to pass a fake session.
   - **Public routes:** only `/login` and `/callback`.
   - **`/login`:** shows the app name and a single "Sign in" button, which calls `loginWithRedirect`. The password is entered on Universal Login, never in our app.
   - **Signed-out visitors:** any other route sends them to `/login?returnTo=<path>`.
@@ -133,7 +134,7 @@ Decided in [#5](https://github.com/pnitijarasrat/bookmark-manager/issues/5).
 
 ### Logout
 
-- **Decision:** logout calls `logout({ logoutParams: { returnTo: 'http://localhost:3000' } })`. This clears the in-memory cache and ends the Auth0 session through `/v2/logout`. The API does nothing on logout. After logout, `/` sends signed-out visitors to `/login`.
+- **Decision:** logout calls `logout({ logoutParams: { returnTo: 'http://localhost:3000' } })`. The SPA passes `window.location.origin`, which is always that value because the dev server uses `strictPort`. This clears the in-memory cache and ends the Auth0 session through `/v2/logout`. The API does nothing on logout. After logout, `/` sends signed-out visitors to `/login`.
 - **Why:** the return URL is fixed by the tenant, and a stateless API has no session to end.
 - **Rejected alternatives:** a server-side token denylist. It would need state and a store, just to handle tokens that expire within 2 hours anyway.
 - **Consequences:** an access token copied before logout keeps working until its `exp`, at most 2 hours later. Auth0 JWT access tokens can't be revoked, and we accept this.
@@ -258,7 +259,7 @@ Decided in [#12](https://github.com/pnitijarasrat/bookmark-manager/issues/12).
 
 ### Data goes through loaders and actions only, with no client cache
 
-- **Decision:** React Router 8 loaders read data and actions write it. After every action, the router reloads the data for the current page. Pending states come from `useNavigation` and `useFetcher`. No client-side cache library is used.
+- **Decision:** React Router 8 loaders read data and actions write it. After every successful action, the router reloads the data for the current page. A failed action returns its result with an error status (the API's, or 503 when no response came back), and React Router skips the reload after any action status of 400 or above. So a rejected save leaves the list behind the dialog, and its Load more pages, as they were. Pending states come from `useNavigation` and `useFetcher`. No client-side cache library is used.
 - **Why:** the data is small and belongs to one User, so reloading after each action is cheap, and it is correct without extra work. A second cache would need its own invalidation rules, which is a common source of stale-data bugs.
 - **Rejected alternatives:** **TanStack Query** as a cache behind the loaders, or instead of them.
 - **Consequences:** every write is followed by a refetch of the current page's data. At this scale we accept the extra requests.
@@ -291,15 +292,22 @@ Decided in [#12](https://github.com/pnitijarasrat/bookmark-manager/issues/12).
   - **The check lives in one place,** so a new protected route is covered without anyone having to remember it.
   - **Tests can pass a fake context.**
 - **Rejected alternatives:** a `<RequireAuth>` wrapper component. Loaders run before components render, so it can't stop them from running.
-- **Consequences:** the app's first render waits for the Auth0 SDK to finish loading.
+- **Consequences:**
+  - The app's first render waits for the Auth0 SDK to finish loading.
+  - RR 8.4's middleware fitted, so no parent-loader fallback was needed.
+  - `isAuthenticated` only changes while the router exists when a session ends, because signing in always leaves the page. `clearSession` sets it to `false` itself before calling `logout({ openUrl: false })`, so `/login` doesn't send the User back to a page whose token has already failed.
 
 ### An expired session sends the user back to `/login`
 
 - **Decision:** one `apiFetch` helper attaches the Bearer token to every request. The redirect is triggered in two cases:
-  - `getAccessTokenSilently` throws.
+  - `getAccessTokenSilently` throws an error that means the session has ended: Auth0's `login_required`, `consent_required`, `interaction_required`, `missing_refresh_token` or `invalid_grant`, or it returns no token. `auth/auth0-session.ts` turns these into a `SessionEndedError`.
   - The API returns 401.
 
-  In either case, the helper clears the local auth state and throws a redirect to `/login?returnTo=<current path>&reason=expired`. `/login` then shows "Your session expired, sign in again".
+  In either case, the helper clears the local auth state and throws a redirect to `/login?returnTo=<current path>&reason=expired`. `/login` then shows "Your session expired, sign in again". The `returnTo` path never includes a Load more `cursor`.
+
+  Any other token failure, like a timeout or being offline, is passed on as it is. A loader shows it in the error boundary with "Try again", and an action shows "Couldn't reach the server" in a Snackbar. The User stays signed in.
+
+  Any other error status is thrown as a `Response` to the route error boundary, unless the caller lists it in `allow`. Actions pass `allow: 'all'` and turn the answer into field errors or a Snackbar. A 401 is never returned to a caller.
 - **Why:**
   - **Expiry is certain:** tokens live in memory only, last 2 hours, and can't be renewed silently (see [Auth](#tokens-are-kept-in-memory-only)).
   - **The user isn't sent off-site without warning,** matching the settled login-page decision.
@@ -317,7 +325,10 @@ Decided in [#12](https://github.com/pnitijarasrat/bookmark-manager/issues/12).
   - **Failed actions:** a 422 is returned as action data and shown next to the form fields. A 404 on a Bookmark submission that included a `collectionId` shows "Collection not found" on the Collection picker, because the API answers 404 for a Collection that doesn't exist or isn't yours (see [Isolation](#another-owners-id-is-always-a-404)). A 404 on the Bookmark's own ID still goes to the error boundary. Any other failure shows a Snackbar.
 - **Why:** the API answers 404 for another Owner's resource too, so the SPA shows the same page for both. That page reveals nothing about whether the resource exists.
 - **Rejected alternatives:** separate "forbidden" and "not found" messages.
-- **Consequences:** the SPA can't tell a mistyped ID from someone else's resource, which is intended.
+- **Consequences:**
+  - The SPA can't tell a mistyped ID from someone else's resource, which is intended.
+  - A PUT to `/bookmarks/:id` that sends a `collectionId` and gets a 404 doesn't say which ID was missing. The action then re-reads `GET /bookmarks/:id`. A 404 there goes to the error boundary. Otherwise the picker shows "Collection not found". A create has no Bookmark ID, so its 404 is the Collection's when it sent one, and goes to the error boundary when it didn't.
+  - A 409 on a Collection name is shown next to the name field, not in a Snackbar.
 
 ### API types are generated from OpenAPI
 
@@ -333,7 +344,9 @@ Decided in [#12](https://github.com/pnitijarasrat/bookmark-manager/issues/12).
 - **Rejected alternatives:**
   - **A shared zod schema package.** It would tie the SPA to the API's validation library.
   - **Hand-written types in both apps.** The two copies drift apart.
-- **Consequences:** a change to the API contract needs the spec and the types regenerated.
+- **Consequences:**
+  - A change to the API contract needs the spec and the types regenerated: `npm run openapi` in `backend/`, then `npm run api-types` in `frontend/`. CI runs `npm run api-types:check`.
+  - `openapi-typescript` 7.13.0 declares a peer dependency on TypeScript `^5`. `frontend/package.json` overrides it to our pinned 6.0.3, which still ships the compiler API that it uses (7.0 is the release without one).
 
 ### What the dialogs contain
 
@@ -348,6 +361,7 @@ Decided in [#12](https://github.com/pnitijarasrat/bookmark-manager/issues/12).
     - **Buttons:** Save, Delete, Close, and "Open link", which opens the URL in a new tab with `rel="noopener noreferrer"`.
     - **Where the Collection list comes from:** the `/bookmarks` loader loads it next to the Bookmarks.
   - **Deleting a Bookmark:** asks for confirmation first.
+  - **A failed delete:** the confirmation closes, and the error shows in the dialog's Snackbar.
   - **After a successful save:** the dialog closes and the list reloads.
 - **Why:**
   - **The Collection dialog** gives the brief's `GET /collections/:id/bookmarks` a real place in the UI, without dialogs opening on top of dialogs.
@@ -358,7 +372,9 @@ Decided in [#12](https://github.com/pnitijarasrat/bookmark-manager/issues/12).
   - **An editable Bookmark list inside the Collection dialog.**
   - **A read-only Bookmark view with a separate Edit mode.**
   - **An undo Snackbar instead of a delete confirmation.**
-- **Consequences:** the dialogs save with PUT, so "None" is sent as `collectionId: null` (see [API contract](#put-replaces-patch-updates-and-the-spa-uses-put)).
+- **Consequences:**
+  - The Collection dialog lists the first 100 of the Collection's Bookmarks (one API page), then says how many more there are. The full, filterable list is `/bookmarks?collectionId=<id>`.
+  - The dialogs save with PUT, so "None" is sent as `collectionId: null` (see [API contract](#put-replaces-patch-updates-and-the-spa-uses-put)).
 
 ### The app shell
 
@@ -392,7 +408,9 @@ Decided in [#12](https://github.com/pnitijarasrat/bookmark-manager/issues/12).
   - **A filtered view can be linked to** and survives back and forward.
   - **Closing a dialog** goes back to the same filtered list.
 - **Rejected alternatives:** filter state kept in React state.
-- **Consequences:** the filter options, param names and pagination UI are decided under [API contract](#lists-use-cursor-pagination-with-a-fixed-sort).
+- **Consequences:**
+  - `/collections` keeps its name search in `q` the same way.
+  - The filter options, param names and pagination UI are decided under [API contract](#lists-use-cursor-pagination-with-a-fixed-sort).
 
 ---
 
@@ -522,7 +540,7 @@ Decided in [#8](https://github.com/pnitijarasrat/bookmark-manager/issues/8). The
     - **Collections:** by `lower(name) asc, id asc`.
   - **The SPA:**
     - A "Load more" button uses a fetcher to add the next page to the list.
-    - The cursor never goes in the URL, so a reload or a shared link shows the first page.
+    - The cursor never goes in the URL, so a reload or a shared link shows the first page. That includes the `returnTo` path an expired session saves.
     - Both `/bookmarks` and `/collections` work this way.
 - **Why:**
   - **Keyset pages don't shift** when items are added or deleted between requests, and there's no `COUNT(*)` query.
@@ -653,10 +671,10 @@ Decided in the pre-build grilling session (2026-09-16), tracked in [#1](https://
 
 ### Transcripts
 
-- **Decision:** logs go in `transcripts/<YYYY-MM-DD>-<topic>/`, with each session's `.jsonl` next to its `/export` text. Before a commit, `transcripts/scrub.py` redacts emails, JWT-shaped strings, OAuth `code`/`state`/`code_verifier` values and absolute home paths. It exits non-zero if anything that matches those patterns is left. Logs are committed at the end of each session.
-- **Why:** the logs are a deliverable, and this repo is public.
-- **Rejected alternatives:** committing logs unscrubbed, and redacting them by hand.
-- **Consequences:** the scrubber works on patterns, so a person still skims each log before committing it.
+- **Decision:** logs go in `transcripts/<YYYY-MM-DD>-<topic>/`, with each session's `.jsonl` next to its `/export` text. Logs are committed as they are, without scrubbing, at the end of each session. (Changed on 2026-09-17: logs used to go through `transcripts/scrub.py` first.)
+- **Why:** the logs are a deliverable, and the owner wants them committed unaltered.
+- **Rejected alternatives:** scrubbing logs with `transcripts/scrub.py`, and redacting them by hand.
+- **Consequences:** this repo is public, so anything in a log is published. `transcripts/scrub.py` was removed.
 
 ---
 
@@ -670,7 +688,7 @@ Decided in the pre-build grilling session (2026-09-16).
   - **API headers:** `helmet` with its defaults. CORS is as decided under [Auth](#the-spa-is-the-oauth-client-pkce-s256-the-api-is-a-stateless-bearer-resource-server).
   - **Rate limiting:** none.
   - **Request logging:** each request logs its method, **route pattern** (for example `/bookmarks/:id`, never the real path or query string), status and duration. Request and response bodies, tokens, `sub` and database error details are never logged.
-  - **SPA:** a CSP `<meta>` tag whose `connect-src` allows only the API origin and the Auth0 tenant.
+  - **SPA:** a CSP `<meta>` tag whose `connect-src` allows only the API origin and the Auth0 tenant. The origins come from `frontend/.env` through Vite's `%VITE_…%` HTML replacement. `connect-src` also keeps `'self'` for the `vite` dev server's hot-reload socket. The SPA makes no data requests to its own origin. Scripts are `'self'` only. Styles also allow `'unsafe-inline'`, because Emotion (MUI) injects `<style>` tags. `frame-src` allows the tenant for the SDK's silent-auth iframe. In `vite` dev, the React Refresh preamble is injected above the `<meta>`, so it runs before the policy applies, and no hash or nonce is needed.
 - **Why:**
   - **helmet costs nothing.**
   - **The app only runs locally,** so rate limiting would protect nothing real.

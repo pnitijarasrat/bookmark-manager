@@ -20,7 +20,8 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             backend/package-lock.json
-      # The root postinstall installs the backend and generates the Prisma client.
+            frontend/package-lock.json
+      # The root postinstall installs both apps and generates the Prisma client.
       - run: npm ci
       # Includes the Prisma boundary. See DECISIONS.md, "The Owner scope lives
       # in a repository layer".
@@ -29,5 +30,8 @@ jobs:
       # Fails if backend/openapi.json doesn't match the code. See DECISIONS.md,
       # "API types are generated from OpenAPI".
       - run: npm run openapi:check --prefix backend
+      # Fails if the SPA's generated API types don't match backend/openapi.json.
+      - run: npm run api-types:check --prefix frontend
+      - run: npm run build --prefix frontend
       # Testcontainers uses the runner's Docker for Postgres.
       - run: npm test
