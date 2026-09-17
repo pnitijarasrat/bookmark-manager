@@ -3,6 +3,7 @@ import {
   exportJWK,
   generateKeyPair,
   importJWK,
+  jwtVerify,
   SignJWT,
   UnsecuredJWT,
   type JWK,
@@ -19,6 +20,23 @@ export const TEST_AUDIENCE = 'https://api.test';
 
 export const OWNER_A = 'auth0|aaaaaaaaaaaaaaaaaaaaaaaa';
 export const OWNER_B = 'auth0|bbbbbbbbbbbbbbbbbbbbbbbb';
+
+export const TEST_USERINFO_URL = `${TEST_ISSUER}userinfo`;
+
+// The fake /userinfo's answer for an Owner. The email is built from the
+// hex part only, so a response containing it never contains the `sub`.
+export function profileOf(sub: string) {
+  const hex = sub.split('|')[1] ?? 'unknown';
+  return {
+    sub,
+    email: `user-${hex.slice(0, 8)}@example.test`,
+    email_verified: true,
+    name: `User ${hex.slice(0, 8)}`,
+    nickname: 'user',
+    picture: 'https://example.test/avatar.png',
+    updated_at: '2026-09-16T10:00:00.000Z',
+  };
+}
 
 export type IdentityProvider = Awaited<ReturnType<typeof createIdentityProvider>>;
 
@@ -48,7 +66,7 @@ export async function createIdentityProvider() {
   const claims = (sub: string, overrides: JWTPayload = {}): JWTPayload => ({
     iss: TEST_ISSUER,
     // Auth0 access tokens carry an array audience.
-    aud: [TEST_AUDIENCE, `${TEST_ISSUER}userinfo`],
+    aud: [TEST_AUDIENCE, TEST_USERINFO_URL],
     sub,
     iat: now(),
     exp: now() + 3600,
@@ -57,8 +75,25 @@ export async function createIdentityProvider() {
 
   const tokenFor = (sub: string, overrides: JWTPayload = {}) => sign(claims(sub, overrides));
 
+  const keySet = createLocalJWKSet(jwks);
+
+  // A stand-in for the tenant's /userinfo, called as `fetch` would be. It
+  // answers a token this provider signed with that Owner's profile, which
+  // includes `sub` like Auth0's does, and anything else with a 401.
+  const userinfo = async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input) !== TEST_USERINFO_URL) throw new Error(`Unexpected fetch to ${String(input)}`);
+    const token = /^Bearer (.+)$/.exec(new Headers(init?.headers).get('authorization') ?? '')?.[1];
+    try {
+      const { payload } = await jwtVerify(token ?? '', keySet, { issuer: TEST_ISSUER });
+      return Response.json(profileOf(payload.sub!));
+    } catch {
+      return new Response('Unauthorized', { status: 401 });
+    }
+  };
+
   return {
-    keySet: createLocalJWKSet(jwks),
+    keySet,
+    userinfo,
     tokenFor,
     tokens: {
       ownerA: () => tokenFor(OWNER_A),

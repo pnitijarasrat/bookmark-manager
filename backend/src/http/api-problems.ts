@@ -11,6 +11,7 @@ const DESCRIPTIONS = {
   409: 'The Owner already has a Collection with this name, ignoring case',
   415: "The body isn't application/json",
   422: 'A value is invalid. Each invalid field is listed with a JSON Pointer.',
+  502: "Auth0's /userinfo failed, timed out or returned something unusable",
 } satisfies Record<number, string>;
 
 /** Documents each listed status as an application/problem+json response. */

@@ -21,6 +21,7 @@ import { CollectionsPage } from './collections/CollectionsPage';
 import { AppShell } from './layout/AppShell';
 import { FullPageSpinner } from './layout/FullPageSpinner';
 import { RouteError } from './layout/RouteError';
+import { shellLoader, shellShouldRevalidate } from './layout/shell.data';
 import { callbackLoader, LoginPage, loginLoader } from './login/login';
 
 /**
@@ -33,6 +34,8 @@ export const routes: RouteObject[] = [
   { path: '/callback', loader: callbackLoader, Component: FullPageSpinner },
   {
     middleware: [requireAuth],
+    loader: shellLoader,
+    shouldRevalidate: shellShouldRevalidate,
     Component: AppShell,
     ErrorBoundary: RouteError,
     children: [

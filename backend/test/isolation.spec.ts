@@ -105,6 +105,9 @@ const idOf = (world: World, target: Target, kind: 'collection' | 'bookmark') =>
 const bookmarkBody = { url: 'https://new.test', title: 'New', notes: '' };
 
 const CALLS: Record<string, Call> = {
+  // The fake /userinfo answers with A's profile, `sub` included, which the
+  // secret check below proves /me drops.
+  'GET /me | the caller': (_, __, token) => api.request('/me', { token }),
   'GET /collections | the list': (_, __, token) => api.request('/collections?limit=100', { token }),
   'POST /collections | the name already in use': (world, target, token) =>
     api.send('POST', '/collections', token, {

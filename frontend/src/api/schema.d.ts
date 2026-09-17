@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The signed-in User's profile, from Auth0's /userinfo. Never includes the
+         *     `sub`.
+         */
+        get: operations["MeController_me"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/collections": {
         parameters: {
             query?: never;
@@ -110,6 +130,14 @@ export interface components {
             title: string;
             status: number;
             errors: components["schemas"]["FieldErrorDto"][];
+        };
+        MeDto: {
+            /** @description Null if Auth0 doesn't return one. */
+            email: string | null;
+            /** @description Null if Auth0 doesn't return one. */
+            name: string | null;
+            /** @description An image URL, or null if Auth0 doesn't return one. */
+            picture: string | null;
         };
         CollectionDto: {
             /** Format: uuid */
@@ -218,6 +246,43 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    MeController_me: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeDto"];
+                };
+            };
+            /** @description The Bearer token is missing, invalid or expired */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDto"];
+                };
+            };
+            /** @description Auth0's /userinfo failed, timed out or returned something unusable */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDto"];
+                };
+            };
+        };
+    };
     CollectionsController_list: {
         parameters: {
             query?: {

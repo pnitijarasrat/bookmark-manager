@@ -5,6 +5,7 @@ import { AppModule } from '../../src/app.module.js';
 import { configureApp } from '../../src/app.setup.js';
 import { JWKS } from '../../src/auth/token-verifier.js';
 import { AppConfig, loadConfig } from '../../src/config/app-config.js';
+import { USERINFO_FETCH } from '../../src/me/userinfo.client.js';
 import { TEST_AUDIENCE, TEST_ISSUER, type IdentityProvider } from './identity-provider.js';
 
 export type TestApp = Awaited<ReturnType<typeof startApp>>;
@@ -21,8 +22,11 @@ export async function startApp({
   // Nothing listens here, so a test without a database fails loudly if it
   // ever queries one.
   databaseUrl = 'postgresql://nobody:nothing@127.0.0.1:1/none',
+  // What the app calls in place of Auth0's /userinfo.
+  userinfo = idp.userinfo,
 }: {
   idp: IdentityProvider;
+  userinfo?: typeof fetch;
   imports?: (Type | DynamicModule)[];
   controllers?: Type[];
   databaseUrl?: string;
@@ -38,6 +42,8 @@ export async function startApp({
     .useValue(config)
     .overrideProvider(JWKS)
     .useValue(idp.keySet)
+    .overrideProvider(USERINFO_FETCH)
+    .useValue(userinfo)
     .compile();
 
   const logs: string[] = [];
