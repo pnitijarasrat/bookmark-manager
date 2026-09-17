@@ -6,6 +6,7 @@ export const NOT_FOUND = '{"type":"about:blank","title":"Not Found","status":404
 
 export type Api = TestApp & {
   idp: IdentityProvider;
+  databaseUrl: string;
   // A fresh Owner with a valid token, so tests never share data.
   owner: () => Promise<{ sub: string; token: string }>;
   stop: () => Promise<void>;
@@ -19,6 +20,7 @@ export async function startApi(): Promise<Api> {
   return {
     ...api,
     idp,
+    databaseUrl: db.url,
     owner: async () => {
       const sub = newOwner();
       return { sub, token: await idp.tokenFor(sub) };

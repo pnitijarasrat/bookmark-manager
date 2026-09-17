@@ -1,0 +1,260 @@
+ ▐▛███▛█   Claude Code v2.1.274
+▝▜██████▀  Opus 5 · Claude Pro
+  ▝▝ ▝▝    ~/personal/bookmark-manager/backend
+
+
+❯ /clear                                                                        
+
+❯ /code-review medium feat/20-seed                                              
+  ⎿  Running in the background as @code-review
+
+⏺ Agent "/code-review medium feat/20-seed" finished · 1m 19s
+
+⏺ The /code-review medium run on feat/20-seed finished and found no bugs that
+  would break the seed feature. Local main is out of date, so the review
+  compared against origin/main instead. It came back with two low-severity
+  findings.
+
+  1. DECISIONS.md:39 points to a README that doesn't exist. The new "Seed data"
+     section says the README has a psql command that counts each Owner's rows.
+     There is no README on this branch or on origin/main. As a result:
+     - A reviewer has no documented way to check Owner B's rows.
+     - The steps for setting SEED_OWNER_A_SUB are only printed when the seed
+       script runs.
+
+     Fix: add that README section, or reword the decision.
+  2. backend/prisma/seed.ts:216: two seed runs at the same time can make npm run
+     dev fail.
+     - seed() counts an Owner's rows and then inserts them inside a transaction,
+       but that doesn't stop two runs from both counting zero.
+     - If two db:seed runs overlap (say, two npm run dev started together), both
+       insert and the second fails on collections_owner_id_name_key.
+     - That failure exits with code 1, so the root dev script stops before the
+       apps start. The chance of this is small.
+
+     Fix: take a per-Owner lock before counting, or treat that unique-key error
+     as "already seeded".
+
+  Checked with no problems:
+  - The reset guard only accepts localhost:5434.
+  - Pagination works out: Owner A gets 58 Bookmarks, which makes the 2 pages at
+    50 per page that the tests expect.
+  - The spacing between created timestamps is exact.
+  - The lint exemption covers prisma/seed.ts.
+  - import.meta.main and top-level await work because the package is an ES
+    module.
+  - The command-line tests pass their own DATABASE_URL, so they can't touch the
+    Compose database.
+  - whoami never shows the token in its error messages.
+
+  Want me to fix either one? The first is a quick docs change. Adding the lock
+  for the second would come with a test, since this is a build-rule project.
+
+✻ Brewed for 7s · done 10:17 PM
+
+❯ both                                                                          
+
+  Listed 1 directory, ran 4 shell commands (ctrl+o to expand)
+
+⏺ Since the README work is tracked in #23, I'll note that as pending and add the
+  psql command to the seed script for now. Next, I'll write a failing test
+  covering two simultaneous seed runs.
+
+⏺ Update(test/seed.spec.ts)
+  ⎿  Added 12 lines
+      174      expect({ a: await snapshot(a.sub), b: await snapshot(b.sub
+           ) }).toEqual(before);
+      175    });
+      176  
+      177 +  it('seeds each Owner once when two runs overlap', async () =
+          +> {                                                           
+      178 +    const [a, b] = [await api.owner(), await api.owner()];    
+      179 +    const reports = await Promise.all([                       
+      180 +      seed(prisma, { ownerA: a.sub, ownerB: b.sub }),         
+      181 +      seed(prisma, { ownerA: a.sub, ownerB: b.sub }),         
+      182 +    ]);                                                       
+      183 +                                                              
+      184 +    expect(reports.flat().filter((line) => line.endsWith('seed
+          +ed.'))).toHaveLength(2);                                      
+      185 +    expect((await rowsOf(a.sub)).collections).toEqual(['Readin
+          +g', 'Recipes']);                                              
+      186 +    expect((await rowsOf(b.sub)).collections).toEqual(['Owner 
+          +B only', 'reading']);                                         
+      187 +  });                                                         
+      188 +                                                              
+      189    it('seeds only B when there is no A', async () => {
+      190      const b = await api.owner();
+      191      await seed(prisma, { ownerB: b.sub });
+
+⏺ Update(test/seed.spec.ts)
+  ⎿  Added 13 lines
+      213      expect(await snapshot(third.sub)).toEqual(thirdBefore);
+      214    });
+      215  
+      216 +  it('gives the same rows when two resets overlap', async () =
+          +> {                                                           
+      217 +    const [a, b] = [await api.owner(), await api.owner()];    
+      218 +    await seed(prisma, { ownerA: a.sub, ownerB: b.sub });     
+      219 +    const expected = { a: await rowsOf(a.sub), b: await rowsOf
+          +(b.sub) };                                                    
+      220 +                                                              
+      221 +    await Promise.all([                                       
+      222 +      reset(prisma, { ownerA: a.sub, ownerB: b.sub }),        
+      223 +      reset(prisma, { ownerA: a.sub, ownerB: b.sub }),        
+      224 +    ]);                                                       
+      225 +                                                              
+      226 +    expect({ a: await rowsOf(a.sub), b: await rowsOf(b.sub) })
+          +.toEqual(expected);                                           
+      227 +  });                                                         
+      228 +                                                              
+      229    it('rebuilds an Owner who had no rows', async () => {
+      230      const [a, b] = [await api.owner(), await api.owner()];
+      231      await reset(prisma, { ownerA: a.sub, ownerB: b.sub });
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Both new tests fail as expected. Overlapping resets are worse than the review
+  said: they leave duplicate Bookmarks. Adding a per-Owner lock now.
+
+⏺ Bash(python3 - <<'EOF'
+      p='prisma/seed.ts'…)
+  ⎿   Test Files  1 passed (1)
+           Tests  24 passed (24)
+        Start at  22:20:47
+        Duration  5.08s (tests 79%, import 17%, transform 4%)
+  ⎿  Updated prisma/seed.ts (+8 -0)
+      78    });
+      79  }
+      80  
+      81 +// Holds until the transaction ends, so overlapping runs (two `
+         +npm run dev`                                                   
+      82 +// started together) take turns on each Owner instead of both w
+         +riting.                                                        
+      83 +async function lock(tx: Tx, ownerId: string) {                 
+      84 +  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${
+         +'seed:' + ownerId}))`;                                         
+      85 +}                                                              
+      86 +                                                               
+      87  async function remove(tx: Tx, ownerId: string) {
+      88    await tx.bookmark.deleteMany({ where: { ownerId } });
+      89    await tx.collection.deleteMany({ where: { ownerId } });
+     ...
+      103    const report: string[] = [];
+      104    for (const { label, ownerId, data } of ownersToSeed(owners))
+            {
+      105      const seeded = await prisma.$transaction(async (tx) => {
+      106 +      await lock(tx, ownerId);                                
+      107        const [collections, bookmarks] = await Promise.all([
+      108          tx.collection.count({ where: { ownerId } }),
+      109          tx.bookmark.count({ where: { ownerId } }),
+     ...
+      121  export async function reset(prisma: PrismaClient, owners: Seed
+           Owners): Promise<string[]> {
+      122    const list = ownersToSeed(owners);
+      123    await prisma.$transaction(async (tx) => {
+      124 +    for (const { ownerId } of list) await lock(tx, ownerId);  
+      125      for (const { ownerId } of list) await remove(tx, ownerId);
+      126      for (const { ownerId, data } of list) await insert(tx, own
+           erId, data);
+      127    });
+  ⎿  (timeout 5m)
+
+⏺ Tests pass. Now the docs: I'll check the psql command against the Compose
+  database.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The command works. Now I'll add it to the seed script's header and update the
+  decision.
+
+⏺ Bash(python3 - <<'EOF'
+      p='backend/prisma/seed.ts'…)
+  ⎿  > bookmark-manager-backend@0.0.1 lint
+     > eslint .
+     … +7 lines (ctrl+o to expand)
+  ⎿  Updated ~/personal/bookmark-manager/DECISIONS.md (+2 -1)
+      716      - **`SEED_OWNER_A_SUB` unset:** only B is seeded, and a me
+           ssage explains how to set the variable. A is seeded on the nex
+           t run after the variable is set.
+      717    - **Reset:** `npm run db:seed:reset` deletes and re-creates 
+           the rows of B, and of A if the variable is set, in one transac
+           tion. It touches no other Owner. It refuses to run unless `DAT
+           ABASE_URL` points at the local Compose database (`localhost:54
+           34`, or `127.0.0.1:5434`, which is the address Compose binds).
+      718    - **Finding your `sub`:** `npm run whoami --prefix backend -
+           - <token>` decodes an access token locally and prints only its
+            `sub`. It doesn't verify the token. The reviewer copies the t
+           oken from the `Authorization` header of any API request in the
+            browser's Network tab.
+      719 -  - **Seeing B's rows:** the README gives a `psql` command, ru
+          -n through `docker compose exec`, that counts rows for each Own
+          -er.                                                           
+      719 +  - **Seeing B's rows:** a `psql` command, run through `docker
+          + compose exec`, counts rows for each Owner. Until the README l
+          +ands in [#23](https://github.com/pnitijarasrat/bookmark-manage
+          +r/issues/23), it lives in the header comment of `backend/prism
+          +a/seed.ts`.                                                   
+      720 +  - **Overlapping runs:** each run takes a per-Owner advisory 
+          +lock (`pg_advisory_xact_lock`) inside its transaction, so two 
+          +runs started together take turns. The second then sees the fir
+          +st's rows and leaves that Owner alone, instead of failing on t
+          +he unique Collection name and stopping `npm run dev`.         
+      721  - **Why:**
+      722    - **Only one Owner can sign in.** Sign-up is disabled, and t
+           he tenant has one test user (see [Universal Login with existin
+           g database users](#universal-login-with-existing-database-user
+           s-no-offline_access)). B exists to show, in the database, that
+            data A must never see is really there.
+      723    - **Keeping the `sub` in an environment variable** keeps rea
+           l account identifiers out of this public repo, as the research
+            docs already do.
+  ⎿  Updated prisma/seed.ts (+8 -1)
+       7  //   npm run db:seed:reset    deletes and re-creates the seed O
+          wners' rows
+       8  //
+       9  // Owner A is the tenant's test user, from SEED_OWNER_A_SUB. Ow
+          ner B can never
+      10 -// sign in: B's rows exist to show what A must never see.      
+      10 +// sign in: B's rows exist to show what A must never see. To co
+         +unt each                                                       
+      11 +// Owner's rows (the README from #23 will carry this too):     
+      12 +//                                                             
+      13 +//   docker compose exec postgres psql -U bookmarks -d bookmark
+         +s -c "SELECT owner_id,                                         
+      14 +//     (SELECT count(*) FROM collections c WHERE c.owner_id = o
+         +.owner_id) AS collections,                                     
+      15 +//     (SELECT count(*) FROM bookmarks b WHERE b.owner_id = o.o
+         +wner_id) AS bookmarks                                          
+      16 +//     FROM (SELECT owner_id FROM collections UNION SELECT owne
+         +r_id FROM bookmarks) o                                         
+      17 +//     ORDER BY owner_id"                                      
+      18  
+      19  export const OWNER_B = 'auth0|000000000000000000000000';
+      20  
+  ⎿  (timeout 10m)
+
+⏺ I fixed both findings. Backend lint, typecheck and all 412 tests pass. Nothing
+  is committed yet.
+
+  1. Two seed runs at the same time (backend/prisma/seed.ts)
+  - Tests first: I added two tests to backend/test/seed.spec.ts: two overlapping
+    seed() runs, and two overlapping reset() runs. Both failed before the fix.
+  - Resets were also broken: two resets at once didn't just fail, they left
+    Owner A with duplicate Bookmarks.
+  - The fix: each run now takes a lock per Owner inside its transaction, so two
+    runs take turns. The second seed run finds the rows the first one wrote and
+    leaves that Owner alone, so npm run dev no longer stops.
+
+  2. The README that doesn't exist (DECISIONS.md)
+  - Why there's no README: it is scheduled for #23, which already plans to
+    include the psql command for seeing Owner B's rows.
+  - Where the command lives now: I put it in the header comment of seed.ts. I
+    ran it against the Compose database and it lists each Owner's Collection and
+    Bookmark counts.
+  - The decision: the "Seed data" section now says the command sits in seed.ts
+    until #23 adds the README. I also added a line about the lock.
+
+  Want me to commit these on feat/20-seed? The untracked session export in
+  transcripts/ isn't part of these changes.
+
+✻ Cogitated for 1m 40s · done 10:21 PM

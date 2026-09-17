@@ -19,7 +19,7 @@ From [#13](https://github.com/pnitijarasrat/bookmark-manager/issues/13).
 - **Rejected alternatives:**
   - **Google sign-in through Auth0 developer keys.** It would give distinct real Users without dashboard access, but developer keys aren't meant for real use, and they break SSO.
   - **Adding `offline_access`.** It goes beyond the brief's scope, and whether refresh tokens would be issued depends on dashboard settings we can't see.
-- **Consequences:** there are no refresh tokens. Only one test user exists, so only one seeded Owner can actually sign in (see [#11](https://github.com/pnitijarasrat/bookmark-manager/issues/11)).
+- **Consequences:** there are no refresh tokens. Only one test user exists, so only one seeded Owner can actually sign in (see [Seed data](#seed-data)).
 
 ### No User table: the Owner is the Auth0 `sub`
 
@@ -694,6 +694,50 @@ Decided in the pre-build grilling session (2026-09-16), tracked in [#1](https://
   - **Checking config at startup** turns a wrong issuer or audience into a clear startup error, not a stream of 401s.
 - **Rejected alternatives:** running Postgres on the host, and starting each app by hand.
 - **Consequences:** Docker is a prerequisite, and the README says so.
+
+### Seed data
+
+From [#11](https://github.com/pnitijarasrat/bookmark-manager/issues/11), built in [#20](https://github.com/pnitijarasrat/bookmark-manager/issues/20).
+
+- **Decision:**
+  - **Owners:**
+    - **Owner A** is the tenant's real test user. The seed reads A's `sub` from `SEED_OWNER_A_SUB`, which is documented in `backend/.env.example` with no value. No real `sub` is committed.
+    - **Owner B** is `auth0|000000000000000000000000`. B can never sign in, which is intended.
+  - **Contents:**
+    - **Collections:** each Owner gets two. Both Owners have a Collection with the same name in different casing (`Reading` for A, `reading` for B). One of each Owner's Collections has no Bookmarks.
+    - **Bookmarks:** each Owner also gets some Uncategorised Bookmarks, and some URLs appear for both Owners.
+    - **Owner B's text:** every title and note says outright that it belongs to B, for example "Owner B only: if you can see this, isolation is broken".
+    - **A's large Collection:** about 55 Bookmarks in one Collection, so "Load more" shows up on `/bookmarks` and on that Collection's page. B keeps a small set.
+    - **Order:** each row gets its own `createdAt`, one minute apart, so the list order is the same on every run.
+  - **Code:** `backend/prisma/seed.ts` exports `seed(prisma, { ownerA, ownerB })`. A CLI entry point in the same file reads the environment and calls it. The seed runs as `prisma db seed` through `migrations.seed` in `prisma.config.ts`, through a pinned `tsx` (4.23.13). Node 24's built-in TypeScript support was tried first, but it can't resolve the generated client's `.js` imports. `whoami` imports no generated code, so it runs on plain `node`.
+  - **Runs:**
+    - **`npm run dev`** runs the migrations, then `db:seed`, then the apps.
+    - **Empty Owners only:** `db:seed` seeds an Owner only if that Owner has no Collections and no Bookmarks. Otherwise it leaves that Owner alone.
+    - **`SEED_OWNER_A_SUB` unset:** only B is seeded, and a message explains how to set the variable. A is seeded on the next run after the variable is set.
+  - **Reset:** `npm run db:seed:reset` deletes and re-creates the rows of B, and of A if the variable is set, in one transaction. It touches no other Owner. It refuses to run unless `DATABASE_URL` points at the local Compose database (`localhost:5434`, or `127.0.0.1:5434`, which is the address Compose binds).
+  - **Finding your `sub`:** `npm run whoami --prefix backend -- <token>` decodes an access token locally and prints only its `sub`. It doesn't verify the token. The reviewer copies the token from the `Authorization` header of any API request in the browser's Network tab.
+  - **Seeing B's rows:** a `psql` command, run through `docker compose exec`, counts rows for each Owner. Until the README lands in [#23](https://github.com/pnitijarasrat/bookmark-manager/issues/23), it lives in the header comment of `backend/prisma/seed.ts`.
+  - **Overlapping runs:** each run takes a per-Owner advisory lock (`pg_advisory_xact_lock`) inside its transaction, so two runs started together take turns. The second then sees the first's rows and leaves that Owner alone, instead of failing on the unique Collection name and stopping `npm run dev`.
+- **Why:**
+  - **Only one Owner can sign in.** Sign-up is disabled, and the tenant has one test user (see [Universal Login with existing database users](#universal-login-with-existing-database-users-no-offline_access)). B exists to show, in the database, that data A must never see is really there.
+  - **Keeping the `sub` in an environment variable** keeps real account identifiers out of this public repo, as the research docs already do.
+  - **Seeding only empty Owners** means a fresh clone shows the demo, and restarting `dev` never wipes what the reviewer created.
+  - **Leaks are easy to spot:** a shared Collection name, shared URLs and text that names B mean any leak shows up at once, both in the UI and in a search.
+  - **Exporting `seed()`** lets tests run it with test `sub`s through the test identity provider.
+  - **`whoami` keeps the token on the machine,** because `/me` doesn't return `sub` (see [Clients can never set or see `ownerId`](#clients-can-never-set-or-see-ownerid)).
+  - **The localhost check** stops a reset from running `deleteMany` against the wrong database.
+- **Rejected alternatives:**
+  - **Committing the test user's `sub`.**
+  - **A placeholder `sub` for A as well.** Nobody could sign in and see the seeded data.
+  - **Deleting and re-creating on every `dev` start.** It wipes the reviewer's work.
+  - **Upserting seed rows by fixed IDs.** It clashes with the per-Owner unique Collection name.
+  - **Recording seed runs in a `seed_runs` table.** It's a schema change just for demo data.
+  - **Pasting the token into jwt.io.** It sends a live token to a third-party site.
+  - **A `db:owners` script** in place of the `psql` command.
+- **Consequences:**
+  - A reviewer who deletes all their data gets the seed back on the next `dev`.
+  - A reviewer who wants their own data needs a one-time setup step: sign in, run `whoami`, set `SEED_OWNER_A_SUB`, then restart `dev`.
+  - "Running the seed twice gives the same data" means the second `db:seed` changes nothing, and `db:seed:reset` rebuilds the same data every time.
 
 ### Transcripts
 
