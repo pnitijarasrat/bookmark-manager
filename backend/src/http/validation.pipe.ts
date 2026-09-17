@@ -1,14 +1,31 @@
-import { BadRequestException, ValidationPipe, type ValidationError } from '@nestjs/common';
+import {
+  BadRequestException,
+  ValidationPipe,
+  type ArgumentMetadata,
+  type ValidationError,
+} from '@nestjs/common';
 import { UnprocessableContentException, type FieldError } from './problem.js';
 
 /**
- * The global pipe. An unknown field (including `ownerId`) is a 400, and any
- * other failure is a 422 with a pointer per field. See DECISIONS.md, "Errors
- * are problem+json, with 400 for malformed requests and 422 for invalid
- * values".
+ * The global pipe. In a body, an unknown field (including `ownerId`) is a 400,
+ * and any other failure is a 422 with a pointer per field. In a query string,
+ * every failure is a 400: the query is built by the client's code, not typed
+ * by the User. See DECISIONS.md, "Errors are problem+json, with 400 for
+ * malformed requests and 422 for invalid values".
  */
+class ProblemValidationPipe extends ValidationPipe {
+  override async transform(value: unknown, metadata: ArgumentMetadata) {
+    try {
+      return await super.transform(value, metadata);
+    } catch (error) {
+      if (metadata.type === 'query') throw new BadRequestException();
+      throw error;
+    }
+  }
+}
+
 export function createValidationPipe() {
-  return new ValidationPipe({
+  return new ProblemValidationPipe({
     whitelist: true,
     forbidNonWhitelisted: true,
     transform: true,

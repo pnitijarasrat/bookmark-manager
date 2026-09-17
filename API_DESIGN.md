@@ -5,7 +5,7 @@ This is the contract for the bookmark manager API. The reasons behind it are in 
 - **Base URL:** `http://localhost:3001`. The SPA calls it from `http://localhost:3000`.
 - **Auth:** every route requires `Authorization: Bearer <Auth0 access token>`, and there are no public routes. A missing or invalid token gets a `401`. The token's `sub` is the caller's **Owner**.
 - **Format:** request and response bodies are JSON. Errors are `application/problem+json` (see [Errors](#errors)).
-- **Spec:** the OpenAPI spec is generated with `@nestjs/swagger`, committed to the repo, and checked in CI. The SPA's types are generated from it.
+- **Spec:** the OpenAPI spec is generated with `@nestjs/swagger` and its CLI plugin, and committed as [`backend/openapi.json`](backend/openapi.json). `npm run openapi` in `backend/` regenerates it, and CI runs `npm run openapi:check`, which fails if it's out of date. The SPA's types are generated from it.
 
 ---
 
@@ -113,7 +113,7 @@ A path `:id` that isn't a UUID gets a `404` before any query runs. A second DELE
 | `q` | all lists | A case-insensitive substring match. It's trimmed and ≤ 200 chars, an empty `q` counts as absent, and `%`, `_` and `\` are matched literally. It searches `name` on Collections, and `title` and `url` on Bookmarks. |
 | `collectionId` | `GET /bookmarks` | `<uuid>` returns the Bookmarks in that Collection, and `none` returns only Uncategorised Bookmarks. A Collection that doesn't exist or isn't yours gets a `404`, and so does any other value. |
 
-- **Unknown parameters:** any other query parameter gets a `400`.
+- **Unknown parameters:** any other query parameter gets a `400`, and so does any parameter sent more than once, `collectionId` included.
 - **The nested route:** `GET /collections/:id/bookmarks` is the same service call as `GET /bookmarks?collectionId=:id`. It accepts `limit`, `cursor` and `q`, and sending `collectionId` to it gets a `400`.
 
 ### Response and order
@@ -195,6 +195,44 @@ The invariant from the brief (§3) is that a User can never see, change, or lear
    - A `500` body carries no database details.
 
 How isolation is *proven* (cross-Owner tests and a threat model) is decided in [#10](https://github.com/pnitijarasrat/bookmark-manager/issues/10).
+
+### The cross-Owner matrix
+
+Every route and verb, called by Owner A, against each kind of target. `backend/test/isolation.spec.ts` reads this table and runs every cell against the real app and a real Postgres, so the table and the tests can't disagree. The test also fails if the app has a route the table doesn't list.
+
+- **Own:** A's resource. **Other Owner's:** Owner B's. **Missing:** a random UUIDv4 that no row has. **Malformed:** `not-a-uuid`. **No token:** the Own request with no `Authorization` header.
+- **What varies:** the part of the request that names the target. For the lists, it's whose data exists. For `POST /collections`, it's whose Collection already has the name being sent.
+- **In every cell:**
+  - A 404 is the constant body, byte for byte.
+  - No response contains `ownerId`, or either Owner's `sub`.
+  - B's data is unchanged, and so is A's unless the response is a 2xx.
+- **"not listed":** B's Collections and Bookmarks don't appear in A's list, while A's do.
+- **—:** the column doesn't apply to that route.
+
+<!-- cross-owner-matrix:start -->
+| Route | What varies | Own | Other Owner's | Missing | Malformed | No token |
+|---|---|---|---|---|---|---|
+| `GET /collections` | the list | 200 | 200, not listed | — | — | 401 |
+| `POST /collections` | the `name` already in use | 409 | 201 | — | — | 401 |
+| `GET /collections/:id` | path `:id` | 200 | 404 | 404 | 404 | 401 |
+| `PUT /collections/:id` | path `:id` | 200 | 404 | 404 | 404 | 401 |
+| `PATCH /collections/:id` | path `:id` | 200 | 404 | 404 | 404 | 401 |
+| `DELETE /collections/:id` | path `:id` | 204 | 404 | 404 | 404 | 401 |
+| `GET /collections/:id/bookmarks` | path `:id` | 200 | 404 | 404 | 404 | 401 |
+| `GET /bookmarks` | the list | 200 | 200, not listed | — | — | 401 |
+| `GET /bookmarks` | `?collectionId=` | 200 | 404 | 404 | 404 | 401 |
+| `POST /bookmarks` | body `collectionId` | 201 | 404 | 404 | 422 | 401 |
+| `GET /bookmarks/:id` | path `:id` | 200 | 404 | 404 | 404 | 401 |
+| `PUT /bookmarks/:id` | path `:id` | 200 | 404 | 404 | 404 | 401 |
+| `PUT /bookmarks/:id` | body `collectionId` | 200 | 404 | 404 | 422 | 401 |
+| `PATCH /bookmarks/:id` | path `:id` | 200 | 404 | 404 | 404 | 401 |
+| `PATCH /bookmarks/:id` | body `collectionId` | 200 | 404 | 404 | 422 | 401 |
+| `DELETE /bookmarks/:id` | path `:id` | 204 | 404 | 404 | 404 | 401 |
+<!-- cross-owner-matrix:end -->
+
+A malformed `collectionId` in a body gets a 422, because it's an invalid value in a field the User filled in. Everywhere else, a malformed ID gets a 404 (see [§5](#5-errors)).
+
+The same file also runs the four API tests for deleting a Collection from [#9](https://github.com/pnitijarasrat/bookmark-manager/issues/9), listed in [DECISIONS.md](DECISIONS.md#deleting-a-collection-keeps-its-bookmarks). The fifth, the migration test, is in `backend/test/migrations.spec.ts`.
 
 ---
 

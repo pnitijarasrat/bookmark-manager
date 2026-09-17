@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, HttpException, NotFoundException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { BookmarkRepository } from '../src/bookmarks/bookmark.repository.js';
 import { BookmarksModule } from '../src/bookmarks/bookmarks.module.js';
@@ -131,6 +131,17 @@ describe('CollectionRepository', () => {
     });
   });
 
+  it('answers a duplicate name, ignoring case, with a 409, and only within one Owner', async () => {
+    const reading = await collections.create(a, { name: 'Reading' });
+    const later = await collections.create(a, { name: 'Later' });
+    await expect(collections.create(a, { name: 'reading' })).rejects.toBeInstanceOf(ConflictException);
+    await expect(collections.update(a, later.id, { name: 'READING' })).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    await expect(collections.create(b, { name: 'Reading' })).resolves.toMatchObject({ name: 'Reading' });
+    await expect(collections.findById(a, reading.id)).resolves.toEqual(reading);
+  });
+
   it('a second delete of the same ID is a 404', async () => {
     const reading = await collections.create(a, { name: 'Reading' });
     await collections.delete(a, reading.id);
@@ -249,9 +260,8 @@ describe('BookmarkRepository', () => {
   });
 
   it('passes other database errors through, for the filter to make a generic 500', async () => {
-    // A duplicate name is P2002. The Collection routes will map it to a 409.
-    await collections.create(a, { name: 'Reading' });
-    const error = await failure(() => collections.create(a, { name: 'reading' }));
-    expect(error).toMatchObject({ code: 'P2002' });
+    // Postgres refuses a NUL byte in text, and nothing maps that error.
+    const error = await failure(() => bookmarks.create(a, { ...bookmarkInput, title: 'nul\u0000' }));
+    expect(error).not.toBeInstanceOf(HttpException);
   });
 });
