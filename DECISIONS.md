@@ -671,10 +671,10 @@ Decided in the pre-build grilling session (2026-09-16), tracked in [#1](https://
 
 ### Transcripts
 
-- **Decision:** logs go in `transcripts/<YYYY-MM-DD>-<topic>/`, with each session's `.jsonl` next to its `/export` text. Before a commit, `transcripts/scrub.py` redacts emails, JWT-shaped strings, OAuth `code`/`state`/`code_verifier` values and absolute home paths. It exits non-zero if anything that matches those patterns is left. Logs are committed at the end of each session.
-- **Why:** the logs are a deliverable, and this repo is public.
-- **Rejected alternatives:** committing logs unscrubbed, and redacting them by hand.
-- **Consequences:** the scrubber works on patterns, so a person still skims each log before committing it.
+- **Decision:** logs go in `transcripts/<YYYY-MM-DD>-<topic>/`, with each session's `.jsonl` next to its `/export` text. Logs are committed as they are, without scrubbing, at the end of each session. (Changed on 2026-09-17: logs used to go through `transcripts/scrub.py` first.)
+- **Why:** the logs are a deliverable, and the owner wants them committed unaltered.
+- **Rejected alternatives:** scrubbing logs with `transcripts/scrub.py`, and redacting them by hand.
+- **Consequences:** this repo is public, so anything in a log is published. `transcripts/scrub.py` is no longer part of the workflow.
 
 ---
 
