@@ -1,4 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import type { ListOptions, Page } from '../prisma/list.js';
+import { orConflict } from '../prisma/conflict.js';
+import { escapeLike } from '../prisma/like.js';
 import { orNotFound } from '../prisma/not-found.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
@@ -12,6 +15,12 @@ export type Collection = {
 };
 
 export type CollectionInput = { name: string };
+
+// Absent means unchanged.
+export type CollectionChanges = Partial<CollectionInput>;
+
+// Where a page ends, in the list order: name (ignoring case), then id.
+export type CollectionKey = { name: string; id: string };
 
 const select = {
   id: true,
@@ -39,11 +48,32 @@ export class CollectionRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(ownerId: string, input: CollectionInput): Promise<Collection> {
-    const row = await this.prisma.collection.create({
-      data: { ownerId, name: input.name },
+    const row = await orConflict(
+      this.prisma.collection.create({
+        data: { ownerId, name: input.name },
+        select,
+      }),
+    );
+    return toCollection(row);
+  }
+
+  // `name` is citext, so both the order and the keyset comparison ignore case.
+  async list(ownerId: string, { limit, after, q }: ListOptions<CollectionKey>): Promise<Page<Collection>> {
+    const rows = await this.prisma.collection.findMany({
+      where: {
+        ownerId,
+        AND: [
+          q ? { name: { contains: escapeLike(q), mode: 'insensitive' } } : {},
+          after
+            ? { OR: [{ name: { gt: after.name } }, { name: after.name, id: { gt: after.id } }] }
+            : {},
+        ],
+      },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      take: limit + 1,
       select,
     });
-    return toCollection(row);
+    return { items: rows.slice(0, limit).map(toCollection), hasMore: rows.length > limit };
   }
 
   async findById(ownerId: string, id: string): Promise<Collection> {
@@ -55,13 +85,16 @@ export class CollectionRepository {
     return toCollection(row);
   }
 
-  async update(ownerId: string, id: string, input: CollectionInput): Promise<Collection> {
+  async update(ownerId: string, id: string, changes: CollectionChanges): Promise<Collection> {
     const row = await orNotFound(
-      this.prisma.collection.update({
-        where: { id_ownerId: { id, ownerId } },
-        data: { name: input.name },
-        select,
-      }),
+      orConflict(
+        this.prisma.collection.update({
+          where: { id_ownerId: { id, ownerId } },
+          // Set explicitly: Prisma skips @updatedAt when nothing else changes.
+          data: { name: changes.name, updatedAt: new Date() },
+          select,
+        }),
+      ),
     );
     return toCollection(row);
   }

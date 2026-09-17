@@ -504,7 +504,7 @@ Decided in [#8](https://github.com/pnitijarasrat/bookmark-manager/issues/8). The
   - **A single 400 for everything.**
   - **Accepting any `Content-Type`.**
 - **Consequences:**
-  - **Telling 400 from 422:** the `ValidationPipe`'s `exceptionFactory` sends class-validator's `whitelistValidation` failures to 400 and every other failure to 422.
+  - **Telling 400 from 422:** in a body, the `ValidationPipe`'s `exceptionFactory` sends class-validator's `whitelistValidation` failures to 400 and every other failure to 422. In a query string, every failure is a 400, because the SPA's code builds the query and the User doesn't type it.
   - **The 415 check needs its own code.** Express's JSON parser ignores bodies that aren't JSON, and without the check they would show up as 422 "missing field" errors.
 
 ### Lists use cursor pagination with a fixed sort

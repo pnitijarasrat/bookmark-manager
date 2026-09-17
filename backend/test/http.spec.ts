@@ -9,13 +9,12 @@ import {
 } from '@nestjs/common';
 import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { Owner } from '../src/auth/owner.decorator.js';
+import { NOT_FOUND } from './support/api.js';
 import { startApp, type TestApp } from './support/app.js';
 import { createIdentityProvider, OWNER_A, OWNER_B, type IdentityProvider } from './support/identity-provider.js';
 
 // The global guard, pipe, filter and HTTP hardening, probed through a
-// test-only controller. No resource routes exist yet.
-
-const NOT_FOUND = '{"type":"about:blank","title":"Not Found","status":404}';
+// test-only controller, with no database behind it.
 
 class ProbeBody {
   @IsString()

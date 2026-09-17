@@ -55,15 +55,25 @@ export async function startApp({
   await app.listen(0, '127.0.0.1');
   const url = await app.getUrl();
 
+  const request = (path: string, init: RequestInit & { token?: string } = {}) => {
+    const { token, ...rest } = init;
+    const headers = new Headers(rest.headers);
+    if (token !== undefined) headers.set('authorization', `Bearer ${token}`);
+    return fetch(`${url}${path}`, { ...rest, headers });
+  };
+
   return {
     app,
     logs,
-    request: (path: string, init: RequestInit & { token?: string } = {}) => {
-      const { token, ...rest } = init;
-      const headers = new Headers(rest.headers);
-      if (token !== undefined) headers.set('authorization', `Bearer ${token}`);
-      return fetch(`${url}${path}`, { ...rest, headers });
-    },
+    request,
+    // A write with a JSON body.
+    send: (method: string, path: string, token: string | undefined, body: unknown) =>
+      request(path, {
+        method,
+        token,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
     close: () => app.close(),
   };
 }

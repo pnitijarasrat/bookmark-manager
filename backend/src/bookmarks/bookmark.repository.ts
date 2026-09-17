@@ -1,4 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import type { ListOptions, Page } from '../prisma/list.js';
+import { escapeLike } from '../prisma/like.js';
 import { orNotFound } from '../prisma/not-found.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
@@ -22,6 +24,14 @@ export type BookmarkInput = {
 
 // Absent fields are left unchanged. `collectionId: null` makes it Uncategorised.
 export type BookmarkChanges = Partial<BookmarkInput>;
+
+// Where a page ends, in the list order: newest first, then id descending.
+export type BookmarkKey = { createdAt: Date; id: string };
+
+export type BookmarkListOptions = ListOptions<BookmarkKey> & {
+  // A Collection's id, `null` for Uncategorised only, or absent for all.
+  collectionId?: string | null;
+};
 
 const select = {
   id: true,
@@ -58,6 +68,37 @@ export class BookmarkRepository {
     );
   }
 
+  async list(
+    ownerId: string,
+    { limit, after, q, collectionId }: BookmarkListOptions,
+  ): Promise<Page<Bookmark>> {
+    // A filter on a Collection that isn't the Owner's is a 404, never an
+    // empty page.
+    if (collectionId) await this.assertCollection(ownerId, collectionId);
+    const search = q && { contains: escapeLike(q), mode: 'insensitive' as const };
+    const rows = await this.prisma.bookmark.findMany({
+      where: {
+        ownerId,
+        ...(collectionId !== undefined && { collectionId }),
+        AND: [
+          search ? { OR: [{ title: search }, { url: search }] } : {},
+          after
+            ? {
+                OR: [
+                  { createdAt: { lt: after.createdAt } },
+                  { createdAt: after.createdAt, id: { lt: after.id } },
+                ],
+              }
+            : {},
+        ],
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      select,
+    });
+    return { items: rows.slice(0, limit), hasMore: rows.length > limit };
+  }
+
   async findById(ownerId: string, id: string): Promise<Bookmark> {
     const row = await this.prisma.bookmark.findUnique({
       where: { id_ownerId: { id, ownerId } },
@@ -77,6 +118,8 @@ export class BookmarkRepository {
           title: changes.title,
           notes: changes.notes,
           collectionId: changes.collectionId,
+          // Set explicitly: Prisma skips @updatedAt when nothing else changes.
+          updatedAt: new Date(),
         },
         select,
       }),
