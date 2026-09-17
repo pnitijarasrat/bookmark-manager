@@ -671,9 +671,9 @@ Decided in the pre-build grilling session (2026-09-16), tracked in [#1](https://
 
 ### Transcripts
 
-- **Decision:** logs go in `transcripts/<YYYY-MM-DD>-<topic>/`, with each session's `.jsonl` next to its `/export` text. Logs are committed as they are, without scrubbing, at the end of each session. (Changed on 2026-09-17: logs used to go through `transcripts/scrub.py` first.)
+- **Decision:** each session's `/export` text goes in `transcripts/<YYYY-MM-DD>-<topic>/`. Logs are committed as they are, without scrubbing, at the end of each session. Raw `.jsonl` session files are not tracked, and `.gitignore` excludes them. (Changed on 2026-09-17: logs used to go through `transcripts/scrub.py` first, and the `.jsonl` used to be committed next to the export.)
 - **Why:** the logs are a deliverable, and the owner wants them committed unaltered.
-- **Rejected alternatives:** scrubbing logs with `transcripts/scrub.py`, and redacting them by hand.
+- **Rejected alternatives:** scrubbing logs with `transcripts/scrub.py`, redacting them by hand, and committing the raw `.jsonl` files.
 - **Consequences:** this repo is public, so anything in a log is published. `transcripts/scrub.py` was removed.
 
 ---
