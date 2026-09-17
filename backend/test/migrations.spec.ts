@@ -13,7 +13,7 @@ const OWNER_B = 'auth0|bbbbbbbbbbbbbbbbbbbbbbbb';
 let container: StartedPostgreSqlContainer;
 let db: pg.Client;
 
-function prisma(...args: string[]) {
+function runPrismaCli(...args: string[]) {
   return promisify(execFile)('npx', ['prisma', ...args], {
     cwd: new URL('..', import.meta.url).pathname,
     env: { ...process.env, DATABASE_URL: container.getConnectionUri() },
@@ -22,7 +22,7 @@ function prisma(...args: string[]) {
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer('postgres:17').start();
-  await prisma('migrate', 'deploy');
+  await runPrismaCli('migrate', 'deploy');
   db = new pg.Client({ connectionString: container.getConnectionUri() });
   await db.connect();
 });
@@ -66,7 +66,7 @@ describe('the migrated database', () => {
   // or `prisma migrate dev` would try to undo them.
   it('matches schema.prisma with no drift', async () => {
     await expect(
-      prisma('migrate', 'diff', '--from-config-datasource', '--to-schema', 'prisma/schema.prisma', '--exit-code'),
+      runPrismaCli('migrate', 'diff', '--from-config-datasource', '--to-schema', 'prisma/schema.prisma', '--exit-code'),
     ).resolves.toMatchObject({ stdout: expect.stringContaining('No difference detected') });
   });
 });

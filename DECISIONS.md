@@ -174,7 +174,7 @@ Decided in [#7](https://github.com/pnitijarasrat/bookmark-manager/issues/7). How
   - **Reads:** each read is one query on `id AND owner_id`.
   - **Writes:** Collection and Bookmark both have `@@unique([id, ownerId])`. Single-row updates and deletes use `where: { id_ownerId: { id, ownerId } }`, and the repository maps Prisma's `P2025` (record not found) to the standard 404.
   - **The boundary:**
-    - An ESLint `no-restricted-imports` rule, run in CI, lets only `*.repository.ts` files import `PrismaService`, `@prisma/client` or the generated client (`src/generated/prisma`, where Prisma 7 puts it). The Prisma wiring in `src/prisma/` and the seed script are the only other exemptions, and a test lints sample files to prove the rule.
+    - An ESLint `no-restricted-imports` rule, run in CI, lets only `*.repository.ts` files import `PrismaService`, `@prisma/client` or the generated client (`src/generated/prisma`, where Prisma 7 puts it). `prisma.service.ts`, `prisma.module.ts` and the seed script are the only other exemptions, and a test lints sample files to prove the rule.
     - `PrismaModule` is imported only by the repository modules.
 - **Why:**
   - **The Owner is visible at every call,** and tests can pass it as a plain argument.
@@ -188,7 +188,7 @@ Decided in [#7](https://github.com/pnitijarasrat/bookmark-manager/issues/7). How
   - **Code review, or Nest module structure alone,** as the boundary.
 - **Consequences:**
   - The guarantee depends on every repository query including `ownerId`. The lint rule keeps Prisma inside the repositories, and [#10](https://github.com/pnitijarasrat/bookmark-manager/issues/10) proves the repositories themselves.
-  - The seed script uses Prisma outside a repository, so it needs a lint exemption.
+  - The seed script uses Prisma outside a repository, so it needs a lint exemption. So do `prisma.service.ts` and `prisma.module.ts`, which define the client the repositories use. No other file is exempt, tests included.
 
 ### IDs are database-generated UUIDv4
 
@@ -217,7 +217,7 @@ Decided in [#24](https://github.com/pnitijarasrat/bookmark-manager/issues/24).
 
 - **Decision:**
   - **The check:** before a Bookmark write with a `collectionId`, the repository looks the Collection up, scoped to the Owner, and answers 404 if it isn't found.
-  - **The constraint:** a composite foreign key, `Bookmark(collection_id, owner_id) → Collection(id, owner_id)`, backed by the unique key on `Collection(id, owner_id)`.
+  - **The constraint:** a composite foreign key, `Bookmark(collection_id, owner_id) → Collection(id, owner_id)`, backed by the unique key on `Collection(id, owner_id)`. It is `ON UPDATE NO ACTION`, because an Owner never changes.
   - **The race:** if the Collection is deleted between the check and the write, the foreign key fails with `P2003`, and the repository maps that to the same 404.
   - **Other database errors:** any unmapped Prisma error becomes a generic 500 whose body contains no database details.
 - **Why:**
@@ -450,7 +450,7 @@ Decided in [#8](https://github.com/pnitijarasrat/bookmark-manager/issues/8). The
   - **Names that aren't unique,** or unique only with matching case.
   - **Leaving timestamps out of responses.**
 - **Consequences:**
-  - **Name uniqueness** is a unique index on `(owner_id, name)`, with `name` stored as `citext` (see [Collection names are `citext`](#collection-names-are-citext)). The migration is hand-edited only to enable the `citext` extension.
+  - **Name uniqueness** is a unique index on `(owner_id, name)`, with `name` stored as `citext` (see [Collection names are `citext`](#collection-names-are-citext)). The migration enables the `citext` extension by hand.
   - **A whitespace-only `title` or `name`** gets a 422, because trimming happens before validation.
 
 ### PUT replaces, PATCH updates, and the SPA uses PUT

@@ -14,11 +14,12 @@
     "start:prod": "node dist/main",
     "db:migrate": "prisma migrate deploy",
     "db:generate": "prisma generate",
-    "postinstall": "prisma generate",
+    "postinstall": "npm run env:init && prisma generate",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "env:init": "node -e \"const fs=require('fs');if(!fs.existsSync('.env'))fs.copyFileSync('.env.example','.env')\""
   },
   "dependencies": {
     "@nestjs/common": "12.0.3",

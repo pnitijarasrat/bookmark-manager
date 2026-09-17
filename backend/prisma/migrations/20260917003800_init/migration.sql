@@ -45,5 +45,6 @@ CREATE UNIQUE INDEX "bookmarks_id_owner_id_key" ON "bookmarks"("id", "owner_id")
 -- AddForeignKey
 -- Hand-edited: SET NULL only on collection_id (Postgres 15+). A plain SET NULL
 -- would also null owner_id. Deleting a Collection keeps its Bookmarks, and they
--- become Uncategorised. See DECISIONS.md.
-ALTER TABLE "bookmarks" ADD CONSTRAINT "bookmarks_collection_id_owner_id_fkey" FOREIGN KEY ("collection_id", "owner_id") REFERENCES "collections"("id", "owner_id") ON DELETE SET NULL ("collection_id") ON UPDATE CASCADE;
+-- become Uncategorised. ON UPDATE NO ACTION: an Owner never changes. See
+-- DECISIONS.md.
+ALTER TABLE "bookmarks" ADD CONSTRAINT "bookmarks_collection_id_owner_id_fkey" FOREIGN KEY ("collection_id", "owner_id") REFERENCES "collections"("id", "owner_id") ON DELETE SET NULL ("collection_id") ON UPDATE NO ACTION;

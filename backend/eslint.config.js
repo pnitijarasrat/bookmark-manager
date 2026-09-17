@@ -38,7 +38,12 @@ export default tseslint.config(
   {
     // Repositories, the Prisma wiring itself, and the seed script are the
     // only files allowed through the boundary.
-    files: ['**/*.repository.ts', 'src/prisma/**', 'prisma/seed.ts'],
+    files: [
+      '**/*.repository.ts',
+      'src/prisma/prisma.service.ts',
+      'src/prisma/prisma.module.ts',
+      'prisma/seed.ts',
+    ],
     rules: { 'no-restricted-imports': 'off' },
   },
 );
