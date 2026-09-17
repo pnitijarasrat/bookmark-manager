@@ -13,8 +13,15 @@ export abstract class TokenRules {
 // Seconds of clock skew allowed on `exp`.
 const CLOCK_TOLERANCE = 30;
 
+export type VerifiedToken = {
+  // The Owner.
+  sub: string;
+  // When the token expires, in seconds since the epoch.
+  exp: number;
+};
+
 /**
- * Checks an Auth0 access token and returns its `sub`, the Owner. Every
+ * Checks an Auth0 access token and returns its `sub`, the Owner, and `exp`. Every
  * failure is the same 401, whatever the reason. See DECISIONS.md, "How the
  * API checks the access token".
  */
@@ -25,7 +32,7 @@ export class TokenVerifier {
     @Inject(JWKS) private readonly keySet: JWTVerifyGetKey,
   ) {}
 
-  async verify(token: string): Promise<string> {
+  async verify(token: string): Promise<VerifiedToken> {
     try {
       const { payload } = await jwtVerify(token, this.keySet, {
         algorithms: ['RS256'],
@@ -34,7 +41,10 @@ export class TokenVerifier {
         requiredClaims: ['exp'],
         clockTolerance: CLOCK_TOLERANCE,
       });
-      if (typeof payload.sub === 'string' && payload.sub !== '') return payload.sub;
+      // `requiredClaims` checks that `exp` is present, and jose that it's a number.
+      if (typeof payload.sub === 'string' && payload.sub !== '') {
+        return { sub: payload.sub, exp: payload.exp! };
+      }
     } catch {
       // Falls through to the 401 below.
     }

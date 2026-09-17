@@ -7,9 +7,10 @@ import { ConfigModule } from './config/config.module.js';
 import { JsonBodyInterceptor } from './http/json-body.interceptor.js';
 import { ProblemFilter } from './http/problem.filter.js';
 import { createValidationPipe } from './http/validation.pipe.js';
+import { MeModule } from './me/me.module.js';
 
 @Module({
-  imports: [ConfigModule, AuthModule, CollectionsModule, BookmarksModule],
+  imports: [ConfigModule, AuthModule, MeModule, CollectionsModule, BookmarksModule],
   providers: [
     { provide: APP_FILTER, useClass: ProblemFilter },
     { provide: APP_PIPE, useFactory: createValidationPipe },

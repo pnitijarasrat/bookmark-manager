@@ -12,6 +12,7 @@ import { theme } from './theme';
 const reading = aCollection({ bookmarkCount: 2 });
 const post = aBookmark({ collectionId: reading.id });
 const loose = aBookmark({ id: '5c1e0000-0000-4000-8000-000000000002', title: 'Loose link' });
+const me = { email: 'owner-a@example.test', name: 'Owner A', picture: null };
 const later = aCollection({ id: '0b9f0000-0000-4000-8000-000000000002', name: 'Later' });
 
 function renderApp(path: string, session: AuthSession = fakeSession()) {
@@ -30,6 +31,7 @@ function renderApp(path: string, session: AuthSession = fakeSession()) {
 let api: MockApi;
 beforeEach(() => {
   api = mockApi();
+  api.on('GET', '/me', () => Response.json(me));
   api.on('GET', '/bookmarks', () => page([post, loose]));
   api.on('GET', '/collections', () => page([reading]));
   api.on('GET', `/bookmarks/${post.id}`, () => Response.json(post));
@@ -117,6 +119,44 @@ describe('sign-in routes', () => {
 });
 
 describe('the app shell', () => {
+  it("shows the signed-in User's email", async () => {
+    renderApp('/bookmarks');
+
+    const banner = await screen.findByRole('banner');
+    expect(await within(banner).findByText(me.email)).toBeInTheDocument();
+  });
+
+  it('loads /me once, not after each save or navigation', async () => {
+    api.on('PUT', `/bookmarks/${post.id}`, () => Response.json(post));
+    const { router, user } = renderApp(`/bookmarks/${post.id}`);
+
+    const dialog = await screen.findByRole('dialog', { name: 'Edit bookmark' });
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/bookmarks'));
+    await user.click(screen.getByRole('tab', { name: 'Collections' }));
+    await screen.findByText('Reading');
+
+    expect(screen.getByText(me.email)).toBeInTheDocument();
+    expect(api.calls.filter((call) => call.path === '/me')).toHaveLength(1);
+  });
+
+  it('still shows the pages, without an email, when /me fails', async () => {
+    api.on('GET', '/me', () => problem(502));
+    renderApp('/bookmarks');
+
+    expect(await screen.findByText('A post')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
+    expect(screen.queryByText(me.email)).not.toBeInTheDocument();
+  });
+
+  it('sends a 401 from /me to /login?reason=expired', async () => {
+    api.on('GET', '/me', () => problem(401));
+    const { router } = renderApp('/bookmarks');
+
+    expect(await screen.findByText('Your session expired, sign in again')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/login');
+  });
+
   it('shows the tabs and Sign out', async () => {
     renderApp('/collections');
 
@@ -161,7 +201,8 @@ describe('errors', () => {
     renderApp('/nowhere');
 
     expect(await screen.findByRole('heading', { name: 'Not found' })).toBeInTheDocument();
-    expect(api.calls).toHaveLength(0);
+    // Only the shell's own call.
+    expect(api.calls.map((call) => call.path)).toEqual(['/me']);
   });
 
   it('offers Try again after a server error, which reloads the data', async () => {
@@ -428,7 +469,7 @@ describe('/collections', () => {
       await within(dialog).findByText('You already have a Collection with this name'),
     ).toBeInTheDocument();
     expect(screen.getByText('Later')).toBeInTheDocument();
-    expect(api.calls.filter((c) => c.method === 'GET')).toHaveLength(2);
+    expect(api.calls.filter((c) => c.method === 'GET' && c.path.startsWith('/collections'))).toHaveLength(2);
   });
 
   it('shows the Collection dialog with its Bookmarks, each linking to the Bookmark', async () => {

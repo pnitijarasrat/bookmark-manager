@@ -10,7 +10,8 @@ import {
   Toolbar,
   Typography,
 } from '@mui/material';
-import { Link, Outlet, useLocation, useNavigation } from 'react-router';
+import { Link, Outlet, useLoaderData, useLocation, useNavigation } from 'react-router';
+import type { ShellData } from './shell.data';
 
 const TABS = [
   { label: 'Bookmarks', to: '/bookmarks' },
@@ -22,6 +23,7 @@ export function AppShell() {
   const { logout } = useAuth0();
   const { pathname } = useLocation();
   const navigation = useNavigation();
+  const { email } = useLoaderData<ShellData>();
   const current = TABS.find((tab) => pathname.startsWith(tab.to))?.to ?? false;
 
   return (
@@ -37,7 +39,11 @@ export function AppShell() {
             ))}
           </Tabs>
           <Box sx={{ flexGrow: 1 }} />
-          {/* The signed-in email from /me goes here (slice 6, #6). */}
+          {email && (
+            <Typography variant="body2" component="span" sx={{ overflowWrap: 'anywhere' }}>
+              {email}
+            </Typography>
+          )}
           <Button
             color="inherit"
             onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })}

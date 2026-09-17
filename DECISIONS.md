@@ -30,7 +30,33 @@ From [#13](https://github.com/pnitijarasrat/bookmark-manager/issues/13) and [#6]
 - **Rejected alternatives:** a User table keyed on `sub`, with a row created on the first request.
 - **Consequences:**
   - Nothing is written on sign-in.
-  - Profile data for `/me` is fetched per request, never stored. Where it comes from is decided in [#6](https://github.com/pnitijarasrat/bookmark-manager/issues/6).
+  - Profile data for `/me` is never stored in the database. Where it comes from is decided in [/me comes from /userinfo, cached until the token expires](#me-comes-from-userinfo-cached-until-the-token-expires).
+
+### /me comes from /userinfo, cached until the token expires
+
+From [#6](https://github.com/pnitijarasrat/bookmark-manager/issues/6), checked by [#16](https://github.com/pnitijarasrat/bookmark-manager/issues/16) and built in [#22](https://github.com/pnitijarasrat/bookmark-manager/issues/22).
+
+- **Decision:**
+  - **Source:** the API calls the tenant's `/userinfo` (`<AUTH0_ISSUER>userinfo`) with the caller's own Bearer token, after the token guard has verified it.
+  - **Cache:** the result is kept in memory, keyed by the token's SHA-256, until the token's `exp`. Concurrent requests with one token share a call. Expired entries are swept on each call, and failures are never kept.
+  - **Body:** `{ email, name, picture }`. A field that `/userinfo` leaves out, or sends as a non-string, is `null`, and the key is kept. `sub` and every other claim are dropped.
+  - **Failures:** a `401` from `/userinfo` is a `401`. Any other failure (another status, a body that isn't a JSON object, a network error or a 5 s timeout) is a problem+json `502`.
+  - **SPA:** the layout route's loader loads `/me` and sets `shouldRevalidate: () => false`. If `/me` fails with anything but a `401`, the shell leaves the email out and the pages still load.
+- **Why:**
+  - **The access token carries only `sub`** ([#13](https://github.com/pnitijarasrat/bookmark-manager/issues/13)), but its `aud` includes `/userinfo`. [#16](https://github.com/pnitijarasrat/bookmark-manager/issues/16) confirmed that the server-side call returns `email`, `name` and `picture`.
+  - **`/userinfo` is rate-limited** (300 per window, and failed calls count too, per [#16](https://github.com/pnitijarasrat/bookmark-manager/issues/16)), and React Router re-runs a layout loader after every action. The cache and `shouldRevalidate` keep it to about one call per token.
+  - **Keying on a hash** means the cache never holds the raw token. Tying an entry to `exp` means it can't outlive the token it was fetched with.
+  - **`sub` is left out** for the same reason as `ownerId` (see [Clients can never set or see `ownerId`](#clients-can-never-set-or-see-ownerid)).
+  - **A `502`** tells the client the fault is upstream, not its request. The email is only a label, so its failure shouldn't take the app down.
+- **Rejected alternatives:**
+  - **The SPA reading its ID token.** It works, but it leaves `/me` without a use and splits identity between two sources.
+  - **Calling `/userinfo` on every request.** It burns the rate limit.
+  - **A cache with a fixed TTL.** It could outlive the token.
+  - **Exposing `sub` in `/me`.**
+- **Consequences:**
+  - A changed email shows up with the next token, at most one token lifetime later (2 h on this tenant).
+  - The cache lives in one process and is lost on restart, which is fine for a single local API.
+  - `/me` is in the cross-Owner matrix with only the own and no-token columns, since it takes no ID.
 
 ---
 
@@ -389,7 +415,7 @@ Decided in [#12](https://github.com/pnitijarasrat/bookmark-manager/issues/12).
 - **Rejected alternatives:**
   - **An avatar menu.**
   - **A shell that never calls `/me`.**
-- **Consequences:** which `/me` fields the shell shows follows [#6](https://github.com/pnitijarasrat/bookmark-manager/issues/6).
+- **Consequences:** the shell shows only `email` from `/me` (see [/me comes from /userinfo](#me-comes-from-userinfo-cached-until-the-token-expires)). If `/me` fails, the email is left out and the rest of the shell still works.
 
 ### Default destination is `/bookmarks`
 
@@ -699,4 +725,4 @@ Decided in the pre-build grilling session (2026-09-16).
   - **Logging the full URL.**
 - **Consequences:**
   - A request that matches no route (an unknown path, a CORS preflight or a body that fails to parse) logs `(unmatched)` in place of the pattern.
-  - A real deployment would need rate limiting, and it's out of scope here. Auth0 rate-limits `/userinfo`, which is handled under `/me` ([#6](https://github.com/pnitijarasrat/bookmark-manager/issues/6)).
+  - A real deployment would need rate limiting, and it's out of scope here. Auth0 rate-limits `/userinfo`, which `/me` handles with a cache (see [/me comes from /userinfo](#me-comes-from-userinfo-cached-until-the-token-expires)).

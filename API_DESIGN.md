@@ -37,6 +37,18 @@ This is the contract for the bookmark manager API. The reasons behind it are in 
 }
 ```
 
+### Me
+
+```jsonc
+{
+  "email": "user@example.com",            // from Auth0 /userinfo, or null
+  "name": "A User",                       // or null
+  "picture": "https://…/avatar.png"       // or null
+}
+```
+
+Built from the caller's Auth0 `/userinfo` and cached until the token expires ([DECISIONS.md](DECISIONS.md#me-comes-from-userinfo-cached-until-the-token-expires)). A field `/userinfo` doesn't return is `null`, and never missing. There's no `sub` or other identifier.
+
 ### Changes from the brief's suggested shapes
 
 | Brief | This API | Why |
@@ -54,7 +66,7 @@ Timestamps are set only by the server, returned as ISO 8601 in UTC, and stored w
 
 | Method | Path | Success | Errors |
 |---|---|---|---|
-| GET | `/me` | `200`: body pending [#6](https://github.com/pnitijarasrat/bookmark-manager/issues/6). The SPA shell shows `email`. | 401 |
+| GET | `/me` | `200` with a Me. The SPA shell shows `email`. | 401, 502 |
 | GET | `/collections` | `200` with a list page | 400, 401 |
 | POST | `/collections` | `201` with a Collection and a `Location` header | 400, 401, 409, 415, 422 |
 | GET | `/collections/:id` | `200` with a Collection | 401, 404 |
@@ -142,6 +154,7 @@ Every error is `application/problem+json` ([RFC 9457](https://www.rfc-editor.org
 | `415` | A write whose `Content-Type` isn't `application/json` |
 | `422` | Well-formed, but a value is invalid: wrong type, bad length, or a URL scheme that isn't allowed |
 | `500` | Anything unexpected. The body carries no details. |
+| `502` | `GET /me` only: Auth0's `/userinfo` failed, timed out or returned something unusable. A `401` from `/userinfo` is passed on as a `401`. |
 
 **Every 404 has this exact body**, byte for byte, with no `detail` or `instance`:
 
@@ -212,6 +225,7 @@ Every route and verb, called by Owner A, against each kind of target. `backend/t
 <!-- cross-owner-matrix:start -->
 | Route | What varies | Own | Other Owner's | Missing | Malformed | No token |
 |---|---|---|---|---|---|---|
+| `GET /me` | the caller | 200 | — | — | — | 401 |
 | `GET /collections` | the list | 200 | 200, not listed | — | — | 401 |
 | `POST /collections` | the `name` already in use | 409 | 201 | — | — | 401 |
 | `GET /collections/:id` | path `:id` | 200 | 404 | 404 | 404 | 401 |

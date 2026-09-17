@@ -1,6 +1,53 @@
 {
   "openapi": "3.0.0",
   "paths": {
+    "/me": {
+      "get": {
+        "operationId": "MeController_me",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The Bearer token is missing, invalid or expired",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDto"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Auth0's /userinfo failed, timed out or returned something unusable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "The signed-in User's profile, from Auth0's /userinfo. Never includes the\n`sub`.",
+        "tags": [
+          "Me"
+        ]
+      }
+    },
     "/collections": {
       "get": {
         "operationId": "CollectionsController_list",
@@ -1122,6 +1169,31 @@
           "title",
           "status",
           "errors"
+        ]
+      },
+      "MeDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "nullable": true,
+            "description": "Null if Auth0 doesn't return one."
+          },
+          "name": {
+            "type": "string",
+            "nullable": true,
+            "description": "Null if Auth0 doesn't return one."
+          },
+          "picture": {
+            "type": "string",
+            "nullable": true,
+            "description": "An image URL, or null if Auth0 doesn't return one."
+          }
+        },
+        "required": [
+          "email",
+          "name",
+          "picture"
         ]
       },
       "CollectionDto": {
