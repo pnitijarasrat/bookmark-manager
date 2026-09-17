@@ -1,0 +1,46 @@
+// Every table carries owner_id, the Auth0 `sub` of the Owner. There is no User
+// table. See DECISIONS.md, "Isolation".
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Collection {
+  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId   String     @map("owner_id")
+  // citext makes the per-Owner unique name and the name sort ignore case.
+  name      String     @db.Citext
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  bookmarks Bookmark[]
+
+  // Target of Bookmark's composite foreign key, and the Owner-scoped write key.
+  @@unique([id, ownerId])
+  @@unique([ownerId, name])
+  @@map("collections")
+}
+
+model Bookmark {
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId      String      @map("owner_id")
+  url          String
+  title        String
+  notes        String      @default("")
+  collectionId String?     @map("collection_id") @db.Uuid
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  // The migration hand-edits this to ON DELETE SET NULL (collection_id), so
+  // deleting a Collection never nulls owner_id.
+  collection   Collection? @relation(fields: [collectionId, ownerId], references: [id, ownerId], onDelete: SetNull)
+
+  @@unique([id, ownerId])
+  @@index([ownerId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([ownerId, collectionId])
+  @@map("bookmarks")
+}

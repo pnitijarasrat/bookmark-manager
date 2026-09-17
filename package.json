@@ -1,0 +1,20 @@
+{
+  "name": "bookmark-manager",
+  "private": true,
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "env:init": "node -e \"const fs=require('fs');if(!fs.existsSync('backend/.env'))fs.copyFileSync('backend/.env.example','backend/.env')\"",
+    "postinstall": "npm run env:init && npm ci --prefix backend",
+    "predev": "npm run env:init",
+    "dev": "docker compose up -d --wait && npm run db:migrate --prefix backend && concurrently --names api --prefix-colors blue \"npm run start:dev --prefix backend\"",
+    "db:down": "docker compose down",
+    "lint": "npm run lint --prefix backend",
+    "typecheck": "npm run typecheck --prefix backend",
+    "test": "npm test --prefix backend"
+  },
+  "devDependencies": {
+    "concurrently": "10.0.5"
+  }
+}
