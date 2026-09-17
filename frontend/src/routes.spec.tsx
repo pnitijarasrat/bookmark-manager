@@ -133,6 +133,8 @@ describe('the app shell', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Edit bookmark' });
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/bookmarks'));
+    // The closing dialog keeps the shell aria-hidden until its transition ends.
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     await user.click(screen.getByRole('tab', { name: 'Collections' }));
     await screen.findByText('Reading');
 
