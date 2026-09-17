@@ -174,7 +174,7 @@ Decided in [#7](https://github.com/pnitijarasrat/bookmark-manager/issues/7). How
   - **Reads:** each read is one query on `id AND owner_id`.
   - **Writes:** Collection and Bookmark both have `@@unique([id, ownerId])`. Single-row updates and deletes use `where: { id_ownerId: { id, ownerId } }`, and the repository maps Prisma's `P2025` (record not found) to the standard 404.
   - **The boundary:**
-    - An ESLint `no-restricted-imports` rule, run in CI, lets only `*.repository.ts` files import `PrismaService` or `@prisma/client`.
+    - An ESLint `no-restricted-imports` rule, run in CI, lets only `*.repository.ts` files import `PrismaService`, any `@prisma/*` package, `pg`, or the generated client (`src/generated/prisma`, where Prisma 7 puts it). Inline `eslint-disable` comments are turned off, so every exemption is listed in `eslint.config.js`, and a test lints sample files to prove the rule.
     - `PrismaModule` is imported only by the repository modules.
 - **Why:**
   - **The Owner is visible at every call,** and tests can pass it as a plain argument.
@@ -188,7 +188,7 @@ Decided in [#7](https://github.com/pnitijarasrat/bookmark-manager/issues/7). How
   - **Code review, or Nest module structure alone,** as the boundary.
 - **Consequences:**
   - The guarantee depends on every repository query including `ownerId`. The lint rule keeps Prisma inside the repositories, and [#10](https://github.com/pnitijarasrat/bookmark-manager/issues/10) proves the repositories themselves.
-  - The seed script uses Prisma outside a repository, so it needs a lint exemption.
+  - The seed script uses Prisma outside a repository, so it needs a lint exemption. So do `prisma.service.ts` and `prisma.module.ts`, which define the client the repositories use, and two tests of the database layer itself: `prisma.service.spec.ts` and `test/migrations.spec.ts`. No other file is exempt.
 
 ### IDs are database-generated UUIDv4
 
@@ -200,11 +200,24 @@ Decided in [#7](https://github.com/pnitijarasrat/bookmark-manager/issues/7). How
   - **cuid2.** It needs an extra library and has no native Postgres type.
 - **Consequences:** none.
 
+### Collection names are `citext`
+
+Decided in [#24](https://github.com/pnitijarasrat/bookmark-manager/issues/24).
+
+- **Decision:** `collections.name` is a `citext` column (`@db.Citext`), with `@@unique([ownerId, name])`. The first migration runs `CREATE EXTENSION IF NOT EXISTS citext`.
+- **Why:**
+  - **One column does both jobs:** the unique index ignores case, and `orderBy: { name }` sorts ignoring case, so the `lower(name) asc, id asc` order needs no raw SQL.
+  - **Prisma's schema expresses it fully,** so it adds no drift. Prisma doesn't manage extensions without a preview feature, so the hand-added `CREATE EXTENSION` isn't seen as drift either.
+- **Rejected alternatives:**
+  - **A generated `lower(name)` sort-key column.** Prisma 7 can't declare a generated column, so it would be hand-edited SQL that Prisma sees as drift, or a field Prisma tries to write.
+  - **The `postgresqlExtensions` preview feature.** A preview feature for one line of SQL.
+- **Consequences:** `citext` compares with `lower()`, which is the same rule as the documented `lower(name)` sort.
+
 ### A Bookmark's Collection always has the same Owner
 
 - **Decision:**
   - **The check:** before a Bookmark write with a `collectionId`, the repository looks the Collection up, scoped to the Owner, and answers 404 if it isn't found.
-  - **The constraint:** a composite foreign key, `Bookmark(collection_id, owner_id) → Collection(id, owner_id)`, backed by the unique key on `Collection(id, owner_id)`.
+  - **The constraint:** a composite foreign key, `Bookmark(collection_id, owner_id) → Collection(id, owner_id)`, backed by the unique key on `Collection(id, owner_id)`. It is `ON UPDATE NO ACTION`, because an Owner never changes.
   - **The race:** if the Collection is deleted between the check and the write, the foreign key fails with `P2003`, and the repository maps that to the same 404.
   - **Other database errors:** any unmapped Prisma error becomes a generic 500 whose body contains no database details.
 - **Why:**
@@ -437,7 +450,7 @@ Decided in [#8](https://github.com/pnitijarasrat/bookmark-manager/issues/8). The
   - **Names that aren't unique,** or unique only with matching case.
   - **Leaving timestamps out of responses.**
 - **Consequences:**
-  - **Name uniqueness** needs a unique index on `(owner_id, lower(name))`. Prisma's schema can't express that, so it goes in the hand-edited migration, next to the composite foreign key.
+  - **Name uniqueness** is a unique index on `(owner_id, name)`, with `name` stored as `citext` (see [Collection names are `citext`](#collection-names-are-citext)). The migration enables the `citext` extension by hand.
   - **A whitespace-only `title` or `name`** gets a 422, because trimming happens before validation.
 
 ### PUT replaces, PATCH updates, and the SPA uses PUT
@@ -522,7 +535,7 @@ Decided in [#8](https://github.com/pnitijarasrat/bookmark-manager/issues/8). The
   - **Client-chosen `?sort=`.**
 - **Consequences:**
   - **`createdAt` is stored as `timestamptz(3)`.** A JavaScript `Date` holds only milliseconds, so the column must match. Otherwise a cursor taken from a row with microsecond precision would skip or repeat rows.
-  - **Prisma's `orderBy` can't sort on `lower(name)`.** The build decides between a `citext` name column and a generated sort-key column. Either one must also back the unique index.
+  - **Prisma's `orderBy` can't sort on `lower(name)`,** so `name` is a `citext` column, which sorts and compares ignoring case (see [Collection names are `citext`](#collection-names-are-citext)).
 
 ### Filters and the nested Collection route
 
@@ -584,7 +597,7 @@ Decided in [#9](https://github.com/pnitijarasrat/bookmark-manager/issues/9).
   - **Set-null in application code** (`updateMany`, then `delete`, in a transaction): two statements, with a race between them, where one foreign-key rule does the same job atomically.
   - **No confirmation for an empty Collection,** and **generic warning text without a count.**
 - **Consequences:**
-  - **A hand-edited migration:** Prisma's schema can't express `SET NULL (collection_id)`, so `prisma migrate dev` may report drift. A migration test deletes a Collection and checks that its Bookmarks keep their `owner_id` and have `collection_id = null`.
+  - **A hand-edited migration:** Prisma's schema can't express `SET NULL (collection_id)`. The schema says `onDelete: SetNull` (Prisma warns about the required `ownerId`, which is expected), and the migration adds the column list. Checked in [#24](https://github.com/pnitijarasrat/bookmark-manager/issues/24): Prisma's introspection sees both as `SET NULL`, so a second `prisma migrate dev` reports no drift and no workaround is needed. A migration test deletes a Collection and checks that its Bookmarks keep their `owner_id` and have `collection_id = null`, and another runs `prisma migrate diff --exit-code` to keep the no-drift result true.
   - **`updatedAt` stays the same** on the moved Bookmarks, because Prisma's `@updatedAt` only changes when Prisma writes the row. Nothing sorts or filters by `updatedAt`, and the User didn't edit those Bookmarks.
   - **The count in the warning can be slightly out of date** if another tab changed the Collection. No data is lost either way.
   - **Stale references in other tabs are already covered:** a Bookmark dialog that still lists the deleted Collection gets "Collection not found" on save, and a `/bookmarks?collectionId=<deleted>` URL shows the Not-found page.
@@ -623,9 +636,10 @@ Decided in the pre-build grilling session (2026-09-16), tracked in [#1](https://
 ### One-command local development
 
 - **Decision:**
-  - **Database:** `docker-compose.yml` runs Postgres 17.
+  - **Database:** `docker-compose.yml` runs Postgres 17 as Compose project `bbl-bookmarks`, on host port `5434` (bound to `127.0.0.1`), so it doesn't clash with other local Postgres instances on 5432 or 5433.
   - **Start:** the root `package.json` holds only scripts. `npm run dev` starts Postgres, runs the Prisma migrations and the seed, then starts `backend` (`:3001`) and `frontend` (`:3000`) together with `concurrently`.
-  - **Config:** each app has a committed `.env.example`, and real `.env` files are ignored. The API validates its config at startup and refuses to start if a value is missing or malformed.
+  - **Install:** `npm install` at the root copies `backend/.env.example` to `backend/.env` if it's missing, then installs the backend.
+  - **Config:** each app has a committed `.env.example`, and real `.env` files are ignored. The backend's example values are the public tenant facts and the Compose database, so they work as they are. The API validates its config at startup and refuses to start if a value is missing or malformed.
   - **Node:** 24 LTS, pinned with `.nvmrc` and `engines`.
 - **Why:**
   - **A reviewer can run everything with one command.**

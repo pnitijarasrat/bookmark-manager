@@ -1,0 +1,23 @@
+name: bbl-bookmarks
+
+services:
+  postgres:
+    # 15+ is required for ON DELETE SET NULL (collection_id).
+    image: postgres:17
+    environment:
+      POSTGRES_USER: bookmarks
+      POSTGRES_PASSWORD: bookmarks
+      POSTGRES_DB: bookmarks
+    ports:
+      # 5434 on the host, clear of other local Postgres instances.
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bookmarks -d bookmarks"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  postgres-data:
