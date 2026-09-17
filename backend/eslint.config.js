@@ -7,11 +7,15 @@ import tseslint from 'typescript-eslint';
 const prismaBoundary = {
   paths: [
     {
-      name: '@prisma/client',
-      message: 'Only *.repository.ts files may import Prisma.',
+      name: 'pg',
+      message: 'Only *.repository.ts files may reach the database.',
     },
   ],
   patterns: [
+    {
+      regex: '^@prisma/',
+      message: 'Only *.repository.ts files may import Prisma.',
+    },
     {
       regex: '(^|/)generated/prisma(/|$)',
       message: 'Only *.repository.ts files may import the Prisma client.',
@@ -28,6 +32,9 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    // No inline eslint-disable comments, so the boundary can only be relaxed
+    // here, in one reviewed place.
+    linterOptions: { noInlineConfig: true },
     languageOptions: {
       globals: { ...globals.node, ...globals.vitest },
     },
@@ -42,6 +49,9 @@ export default tseslint.config(
       '**/*.repository.ts',
       'src/prisma/prisma.service.ts',
       'src/prisma/prisma.module.ts',
+      // Tests of the Prisma wiring and of the migrated schema itself.
+      'src/prisma/prisma.service.spec.ts',
+      'test/migrations.spec.ts',
       'prisma/seed.ts',
     ],
     rules: { 'no-restricted-imports': 'off' },

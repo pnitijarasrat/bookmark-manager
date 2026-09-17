@@ -174,7 +174,7 @@ Decided in [#7](https://github.com/pnitijarasrat/bookmark-manager/issues/7). How
   - **Reads:** each read is one query on `id AND owner_id`.
   - **Writes:** Collection and Bookmark both have `@@unique([id, ownerId])`. Single-row updates and deletes use `where: { id_ownerId: { id, ownerId } }`, and the repository maps Prisma's `P2025` (record not found) to the standard 404.
   - **The boundary:**
-    - An ESLint `no-restricted-imports` rule, run in CI, lets only `*.repository.ts` files import `PrismaService`, `@prisma/client` or the generated client (`src/generated/prisma`, where Prisma 7 puts it). `prisma.service.ts`, `prisma.module.ts` and the seed script are the only other exemptions, and a test lints sample files to prove the rule.
+    - An ESLint `no-restricted-imports` rule, run in CI, lets only `*.repository.ts` files import `PrismaService`, any `@prisma/*` package, `pg`, or the generated client (`src/generated/prisma`, where Prisma 7 puts it). Inline `eslint-disable` comments are turned off, so every exemption is listed in `eslint.config.js`, and a test lints sample files to prove the rule.
     - `PrismaModule` is imported only by the repository modules.
 - **Why:**
   - **The Owner is visible at every call,** and tests can pass it as a plain argument.
@@ -188,7 +188,7 @@ Decided in [#7](https://github.com/pnitijarasrat/bookmark-manager/issues/7). How
   - **Code review, or Nest module structure alone,** as the boundary.
 - **Consequences:**
   - The guarantee depends on every repository query including `ownerId`. The lint rule keeps Prisma inside the repositories, and [#10](https://github.com/pnitijarasrat/bookmark-manager/issues/10) proves the repositories themselves.
-  - The seed script uses Prisma outside a repository, so it needs a lint exemption. So do `prisma.service.ts` and `prisma.module.ts`, which define the client the repositories use. No other file is exempt, tests included.
+  - The seed script uses Prisma outside a repository, so it needs a lint exemption. So do `prisma.service.ts` and `prisma.module.ts`, which define the client the repositories use, and two tests of the database layer itself: `prisma.service.spec.ts` and `test/migrations.spec.ts`. No other file is exempt.
 
 ### IDs are database-generated UUIDv4
 

@@ -13,6 +13,9 @@ const imports = {
   '@prisma/client': `import { Prisma } from '@prisma/client';\nexport type P = Prisma.PrismaClientKnownRequestError;\n`,
   'the generated client': `import { PrismaClient } from '../generated/prisma/client.js';\nexport type P = PrismaClient;\n`,
   PrismaService: `import { PrismaService } from '../prisma/prisma.service.js';\nexport type P = PrismaService;\n`,
+  'a @prisma/client subpath': `import { Decimal } from '@prisma/client/runtime/client';\nexport type P = Decimal;\n`,
+  'the Prisma pg adapter': `import { PrismaPg } from '@prisma/adapter-pg';\nexport type P = PrismaPg;\n`,
+  'the pg driver': `import pg from 'pg';\nexport type P = pg.Client;\n`,
 };
 
 describe('Prisma import boundary', () => {
@@ -36,6 +39,14 @@ describe('Prisma import boundary', () => {
       const errors = await restrictedImportErrors('prisma/seed.ts', code);
       expect(errors).toHaveLength(0);
     });
+  });
+
+  it('cannot be switched off with an inline comment', async () => {
+    const errors = await restrictedImportErrors(
+      'src/bookmarks/bookmarks.service.ts',
+      `// eslint-disable-next-line no-restricted-imports\n${imports['@prisma/client']}`,
+    );
+    expect(errors).toHaveLength(1);
   });
 
   it('allows unrelated imports', async () => {

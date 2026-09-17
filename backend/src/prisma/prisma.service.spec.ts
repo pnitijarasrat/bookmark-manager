@@ -1,7 +1,5 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { loadConfig } from '../config/app-config.js';
-// The one test of the Prisma wiring itself; everything else goes through repositories.
-// eslint-disable-next-line no-restricted-imports
 import { PrismaService } from './prisma.service.js';
 
 describe('PrismaService', () => {
