@@ -36,4 +36,18 @@ describe('requireAuth', () => {
     );
     expect(next).not.toHaveBeenCalled();
   });
+
+  it('leaves a Load more cursor out of the path to return to', async () => {
+    const { result } = run(
+      'http://localhost:3000/bookmarks?q=a&cursor=next-1',
+      fakeSession({ isAuthenticated: false }),
+    );
+    const thrown = await result.then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect((thrown as Response).headers.get('Location')).toBe(
+      '/login?returnTo=%2Fbookmarks%3Fq%3Da',
+    );
+  });
 });

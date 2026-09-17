@@ -1,3 +1,4 @@
+import { data as withStatus } from 'react-router';
 import { aBookmark, aCollection, page } from '../test/fixtures';
 import { mockApi, noContent, problem, type MockApi } from '../test/mock-api';
 import { dataArgs, thrownBy } from '../test/session';
@@ -54,10 +55,15 @@ describe('collectionsAction (create)', () => {
 
     const result = await collectionsAction(dataArgs('/collections', { form: { name: 'reading' } }));
 
-    expect(result).toEqual({
-      ok: false,
-      fieldErrors: { name: 'You already have a Collection with this name' },
-    });
+    expect(result).toEqual(
+      withStatus(
+        {
+          ok: false,
+          fieldErrors: { name: 'You already have a Collection with this name' },
+        },
+        { status: 409 },
+      ),
+    );
   });
 
   it('returns 422 errors next to their fields', async () => {
@@ -67,7 +73,9 @@ describe('collectionsAction (create)', () => {
 
     const result = await collectionsAction(dataArgs('/collections', { form: { name: ' ' } }));
 
-    expect(result).toEqual({ ok: false, fieldErrors: { name: 'Must not be empty' } });
+    expect(result).toEqual(
+      withStatus({ ok: false, fieldErrors: { name: 'Must not be empty' } }, { status: 422 }),
+    );
   });
 });
 
@@ -124,10 +132,15 @@ describe('collectionAction', () => {
 
     const result = await collectionAction(args({ intent: 'rename', name: 'Later' }));
 
-    expect(result).toEqual({
-      ok: false,
-      fieldErrors: { name: 'You already have a Collection with this name' },
-    });
+    expect(result).toEqual(
+      withStatus(
+        {
+          ok: false,
+          fieldErrors: { name: 'You already have a Collection with this name' },
+        },
+        { status: 409 },
+      ),
+    );
   });
 
   it('throws a 404 when the Collection to rename is not found', async () => {
@@ -152,7 +165,10 @@ describe('collectionAction', () => {
 
     const result = await collectionAction(args({ intent: 'delete' }));
 
-    expect(result).toMatchObject({ ok: false, formError: expect.any(String) });
+    expect(result).toMatchObject({
+      data: { ok: false, formError: expect.any(String) },
+      init: { status: 500 },
+    });
   });
 
   it('rejects an unknown intent', async () => {

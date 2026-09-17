@@ -1,4 +1,4 @@
-import { redirect } from 'react-router';
+import { data, redirect } from 'react-router';
 import type { ValidationProblem } from '../api/types';
 
 export type FieldErrors = Partial<Record<string, string>>;
@@ -13,43 +13,63 @@ export type ActionResult =
 
 export const OK: ActionResult = { ok: true };
 
-export function fieldError(field: string, message: string): ActionResult {
-  return { ok: false, fieldErrors: { [field]: message } };
+/**
+ * A failed result, sent with an error status. The router doesn't reload the
+ * page's data after one, so the list behind the dialog keeps its Load more
+ * pages. The component still reads the result with `useActionData`.
+ */
+export type Rejected = ReturnType<typeof data<ActionResult>>;
+
+/** A failed action gets no API response, e.g. offline, so it has no status of its own. */
+const NO_RESPONSE = 503;
+
+function rejected(result: ActionResult, status: number): Rejected {
+  return data(result, { status });
+}
+
+export function fieldError(field: string, message: string, status: number): Rejected {
+  return rejected({ ok: false, fieldErrors: { [field]: message } }, status);
 }
 
 /** Turns a failed API response into field errors (422) or a form error. */
-export function failure(response: Response, error: unknown): ActionResult {
+export function failure(response: Response, error: unknown): Rejected {
   if (response.status === 422 && isValidationProblem(error)) {
     const fieldErrors: FieldErrors = {};
     for (const { pointer, detail } of error.errors) {
       fieldErrors[pointer.replace(/^\//, '')] ??= capitalise(detail);
     }
-    return { ok: false, fieldErrors };
+    return rejected({ ok: false, fieldErrors }, response.status);
   }
-  return {
-    ok: false,
-    fieldErrors: {},
-    formError:
-      response.status >= 500
-        ? 'Something went wrong on the server. Try again.'
-        : `The change couldn't be saved (error ${response.status}).`,
-  };
+  return rejected(
+    {
+      ok: false,
+      fieldErrors: {},
+      formError:
+        response.status >= 500
+          ? 'Something went wrong on the server. Try again.'
+          : `The change couldn't be saved (error ${response.status}).`,
+    },
+    response.status,
+  );
 }
 
 /**
  * Runs an action's API calls, and turns a network failure into a form error.
  * Thrown Responses (redirects and 404s) still reach the router.
  */
-export async function submitting<T>(run: () => Promise<T>): Promise<T | ActionResult> {
+export async function submitting<T>(run: () => Promise<T>): Promise<T | Rejected> {
   try {
     return await run();
   } catch (error) {
     if (error instanceof Response) throw error;
-    return {
-      ok: false,
-      fieldErrors: {},
-      formError: "Couldn't reach the server. Check your connection and try again.",
-    };
+    return rejected(
+      {
+        ok: false,
+        fieldErrors: {},
+        formError: "Couldn't reach the server. Check your connection and try again.",
+      },
+      NO_RESPONSE,
+    );
   }
 }
 

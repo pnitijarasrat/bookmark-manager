@@ -13,8 +13,13 @@ export const requireAuth: MiddlewareFunction = async ({ request, context }, next
   return next();
 };
 
-/** The path, query and hash of a router request, for `returnTo`. */
+/**
+ * The path, query and hash of a router request, for `returnTo`. A `cursor`
+ * only comes from a Load more fetcher and never goes in the page URL, so it's
+ * left out.
+ */
 export function pathOf(request: Request): string {
   const url = new URL(request.url);
+  url.searchParams.delete('cursor');
   return url.pathname + url.search + url.hash;
 }

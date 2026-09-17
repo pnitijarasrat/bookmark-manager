@@ -1,11 +1,12 @@
+import { SessionEndedError } from '../auth/session';
 import { contextWith, FAKE_TOKEN, fakeSession, thrownBy } from '../test/session';
 import { mockApi, problem, type MockApi } from '../test/mock-api';
 import { apiFetch } from './api-fetch';
 
 const PAGE_URL = 'http://localhost:3000/bookmarks?q=post';
 
-function args(session = fakeSession()) {
-  return { request: new Request(PAGE_URL), context: contextWith(session) };
+function args(session = fakeSession(), url = PAGE_URL) {
+  return { request: new Request(url), context: contextWith(session) };
 }
 
 describe('apiFetch', () => {
@@ -26,10 +27,10 @@ describe('apiFetch', () => {
     expect(api.calls[0].headers.get('Authorization')).toBe(`Bearer ${FAKE_TOKEN}`);
   });
 
-  it('sends the User to /login?reason=expired when the token getter throws', async () => {
+  it('sends the User to /login?reason=expired when the session has ended', async () => {
     const session = fakeSession({
       getAccessToken: vi.fn(async () => {
-        throw new Error('login_required');
+        throw new SessionEndedError();
       }),
     });
 
@@ -41,6 +42,35 @@ describe('apiFetch', () => {
     );
     expect(session.clearSession).toHaveBeenCalledOnce();
     expect(api.calls).toHaveLength(0);
+  });
+
+  it('passes on any other token failure, leaving the session alone', async () => {
+    const offline = new TypeError('Failed to fetch');
+    const session = fakeSession({
+      getAccessToken: vi.fn(async () => {
+        throw offline;
+      }),
+    });
+
+    const thrown = await thrownBy(apiFetch(args(session), (client) => client.GET('/collections')));
+
+    expect(thrown).toBe(offline);
+    expect(session.clearSession).not.toHaveBeenCalled();
+    expect(api.calls).toHaveLength(0);
+  });
+
+  it('leaves a Load more cursor out of the path to return to', async () => {
+    api.on('GET', '/bookmarks', () => problem(401));
+
+    const thrown = await thrownBy(
+      apiFetch(args(fakeSession(), `${PAGE_URL}&cursor=next-1`), (client) =>
+        client.GET('/bookmarks'),
+      ),
+    );
+
+    expect((thrown as Response).headers.get('Location')).toBe(
+      '/login?returnTo=%2Fbookmarks%3Fq%3Dpost&reason=expired',
+    );
   });
 
   it('sends the User to /login?reason=expired on a 401', async () => {

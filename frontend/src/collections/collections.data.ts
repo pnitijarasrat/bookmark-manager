@@ -10,6 +10,7 @@ import {
   submitting,
   text,
   type ActionResult,
+  type Rejected,
 } from '../forms/action-result';
 
 const NAME_IN_USE = 'You already have a Collection with this name';
@@ -26,7 +27,9 @@ export async function collectionsLoader(
 }
 
 /** Creates a Collection from the "New Collection" dialog's fetcher. */
-export async function collectionsAction(args: ActionFunctionArgs): Promise<ActionResult> {
+export async function collectionsAction(
+  args: ActionFunctionArgs,
+): Promise<ActionResult | Rejected> {
   const body = { name: text(await args.request.formData(), 'name') };
   return submitting(async () => {
     const { response, error } = await apiFetch(
@@ -35,7 +38,7 @@ export async function collectionsAction(args: ActionFunctionArgs): Promise<Actio
       { allow: 'all' },
     );
     if (response.ok) return OK;
-    if (response.status === 409) return fieldError('name', NAME_IN_USE);
+    if (response.status === 409) return fieldError('name', NAME_IN_USE, 409);
     return failure(response, error);
   });
 }
@@ -60,14 +63,14 @@ export async function collectionLoader(args: LoaderFunctionArgs): Promise<Collec
 }
 
 /** Renames (PUT) or deletes the Collection in the dialog. */
-export async function collectionAction(args: ActionFunctionArgs): Promise<ActionResult | Response> {
+export async function collectionAction(args: ActionFunctionArgs): Promise<Rejected | Response> {
   const form = await args.request.formData();
   const path = { params: { path: { id: args.params.id! } } };
 
   const settle = ({ response, error }: { response: Response; error?: unknown }) => {
     if (response.ok) return backToList(args.request, '/collections');
     if (response.status === 404) throw errorResponse(404);
-    if (response.status === 409) return fieldError('name', NAME_IN_USE);
+    if (response.status === 409) return fieldError('name', NAME_IN_USE, 409);
     return failure(response, error);
   };
 

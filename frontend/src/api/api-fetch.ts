@@ -2,7 +2,7 @@ import createClient, { type Client } from 'openapi-fetch';
 import { redirect, type RouterContextProvider } from 'react-router';
 import { pathOf } from '../auth/require-auth';
 import { loginPath } from '../auth/return-to';
-import { authContext } from '../auth/session';
+import { authContext, SessionEndedError } from '../auth/session';
 import { config } from '../config';
 import type { paths } from './schema';
 
@@ -23,10 +23,10 @@ interface Options {
 
 /**
  * The one way the SPA calls the API. It attaches the Bearer token, sends an
- * ended session to `/login?reason=expired`, and throws every other error
- * status the caller doesn't `allow` to the route error boundary. See
- * DECISIONS.md, "An expired session sends the user back to `/login`" and
- * "How errors are shown".
+ * ended session (a {@link SessionEndedError} or a 401) to
+ * `/login?reason=expired`, and throws every other error status the caller
+ * doesn't `allow` to the route error boundary. See DECISIONS.md, "An expired
+ * session sends the user back to `/login`" and "How errors are shown".
  */
 export async function apiFetch<R extends { response: Response }>(
   { request, context }: DataArgs,
@@ -42,8 +42,9 @@ export async function apiFetch<R extends { response: Response }>(
   let token: string;
   try {
     token = await session.getAccessToken();
-  } catch {
-    throw await expired();
+  } catch (error) {
+    // Anything else, e.g. a network failure, is shown like a failed API call.
+    throw error instanceof SessionEndedError ? await expired() : error;
   }
 
   const client = createClient<paths>({

@@ -1,6 +1,5 @@
 import { Box, Button } from '@mui/material';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import { useState } from 'react';
 import {
   Form,
   useActionData,
@@ -13,7 +12,7 @@ import {
 } from 'react-router';
 import type { Bookmark, Collection } from '../api/types';
 import type { ActionResult } from '../forms/action-result';
-import { ConfirmDialog } from '../forms/ConfirmDialog';
+import { ConfirmDialog, useConfirmation } from '../forms/ConfirmDialog';
 import { FormDialog } from '../forms/FormDialog';
 import { BookmarkFields } from './BookmarkFields';
 
@@ -26,7 +25,7 @@ export function BookmarkDialog() {
   const navigate = useNavigate();
   const submit = useSubmit();
   const { search } = useLocation();
-  const [confirming, setConfirming] = useState(false);
+  const confirmation = useConfirmation(result);
 
   const action = `/bookmarks/${bookmark.id}${search}`;
   const pendingIntent =
@@ -61,7 +60,7 @@ export function BookmarkDialog() {
           >
             Open link
           </Button>
-          <Button color="error" onClick={() => setConfirming(true)}>
+          <Button color="error" onClick={confirmation.show}>
             Delete
           </Button>
           <Box sx={{ flexGrow: 1 }} />
@@ -73,12 +72,12 @@ export function BookmarkDialog() {
       }
     >
       <ConfirmDialog
-        open={confirming}
+        open={confirmation.open}
         title="Delete this bookmark?"
         message={`“${bookmark.title}” will be deleted. This can't be undone.`}
         confirmLabel="Delete"
         pending={pendingIntent === 'delete'}
-        onCancel={() => setConfirming(false)}
+        onCancel={confirmation.hide}
         onConfirm={() => submit({ intent: 'delete' }, { method: 'post', action })}
       />
     </FormDialog>

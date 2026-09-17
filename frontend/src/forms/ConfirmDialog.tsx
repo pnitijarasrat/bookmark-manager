@@ -6,7 +6,7 @@ import {
   DialogContentText,
   DialogTitle,
 } from '@mui/material';
-import { useId } from 'react';
+import { useId, useState } from 'react';
 
 /** Asks before an action that can't be undone. */
 export function ConfirmDialog({
@@ -43,4 +43,17 @@ export function ConfirmDialog({
       </DialogActions>
     </Dialog>
   );
+}
+
+/**
+ * Opens and closes a {@link ConfirmDialog}. It also closes once the action
+ * returns a new `result`, so a failed delete's error shows in the dialog below.
+ */
+export function useConfirmation(result: unknown) {
+  const [openedAt, setOpenedAt] = useState<{ result: unknown } | null>(null);
+  return {
+    open: openedAt !== null && openedAt.result === result,
+    show: () => setOpenedAt({ result }),
+    hide: () => setOpenedAt(null),
+  };
 }

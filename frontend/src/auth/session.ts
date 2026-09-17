@@ -7,10 +7,21 @@ import { createContext, RouterContextProvider } from 'react-router';
  */
 export interface AuthSession {
   isAuthenticated: boolean;
-  /** Resolves to an API access token, or throws if the session has ended. */
+  /**
+   * Resolves to an API access token. Throws a {@link SessionEndedError} if the
+   * session has ended, and any other error if the token couldn't be fetched.
+   */
   getAccessToken: () => Promise<string>;
   /** Forgets the tokens in memory without leaving the app. */
   clearSession: () => Promise<void>;
+}
+
+/** The session has ended, and only signing in again gets a new token. */
+export class SessionEndedError extends Error {
+  constructor() {
+    super('The session has ended');
+    this.name = 'SessionEndedError';
+  }
 }
 
 export const authContext = createContext<AuthSession>();

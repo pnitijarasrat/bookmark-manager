@@ -2,7 +2,7 @@ import { ThemeProvider } from '@mui/material';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router';
-import type { AuthSession } from './auth/session';
+import { SessionEndedError, type AuthSession } from './auth/session';
 import { routes } from './routes';
 import { aBookmark, aCollection, page } from './test/fixtures';
 import { mockApi, noContent, problem, type MockApi } from './test/mock-api';
@@ -12,6 +12,7 @@ import { theme } from './theme';
 const reading = aCollection({ bookmarkCount: 2 });
 const post = aBookmark({ collectionId: reading.id });
 const loose = aBookmark({ id: '5c1e0000-0000-4000-8000-000000000002', title: 'Loose link' });
+const later = aCollection({ id: '0b9f0000-0000-4000-8000-000000000002', name: 'Later' });
 
 function renderApp(path: string, session: AuthSession = fakeSession()) {
   const router = createMemoryRouter(routes, {
@@ -76,10 +77,10 @@ describe('sign-in routes', () => {
     expect(router.state.location.pathname).toBe('/bookmarks');
   });
 
-  it('sends a token failure to /login?reason=expired', async () => {
+  it('sends an ended session to /login?reason=expired', async () => {
     const session = fakeSession({
       getAccessToken: async () => {
-        throw new Error('login_required');
+        throw new SessionEndedError();
       },
     });
     const { router } = renderApp('/collections', session);
@@ -87,6 +88,31 @@ describe('sign-in routes', () => {
     expect(await screen.findByText('Your session expired, sign in again')).toBeInTheDocument();
     expect(router.state.location.search).toBe('?returnTo=%2Fcollections&reason=expired');
     expect(session.clearSession).toHaveBeenCalled();
+  });
+
+  it('keeps the User signed in when the token request fails for another reason', async () => {
+    const session = fakeSession({
+      getAccessToken: async () => {
+        throw new TypeError('Failed to fetch');
+      },
+    });
+    const { router } = renderApp('/collections', session);
+
+    expect(await screen.findByText('Something went wrong loading this page.')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/collections');
+    expect(session.clearSession).not.toHaveBeenCalled();
+  });
+
+  it('returns to the first page, not the Load more page, after an expiry', async () => {
+    api.on('GET', '/bookmarks', ({ searchParams }) =>
+      searchParams.get('cursor') ? problem(401) : page([post], 'next-1'),
+    );
+    const { router, user } = renderApp('/bookmarks?q=o');
+
+    await user.click(await screen.findByRole('button', { name: 'Load more' }));
+
+    expect(await screen.findByText('Your session expired, sign in again')).toBeInTheDocument();
+    expect(router.state.location.search).toBe('?returnTo=%2Fbookmarks%3Fq%3Do&reason=expired');
   });
 });
 
@@ -184,6 +210,27 @@ describe('/bookmarks', () => {
     expect(screen.getByText('A post')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
     expect(api.calls.at(-1)?.path).toBe('/bookmarks?q=o&cursor=next-1');
+  });
+
+  it('keeps the loaded pages when a save is rejected', async () => {
+    api.on('GET', '/bookmarks', ({ searchParams }) =>
+      searchParams.get('cursor') === 'next-1' ? page([loose]) : page([post], 'next-1'),
+    );
+    api.on('PUT', `/bookmarks/${post.id}`, () =>
+      problem(422, { errors: [{ pointer: '/title', detail: 'must not be empty' }] }),
+    );
+    const { user } = renderApp('/bookmarks');
+
+    await user.click(await screen.findByRole('button', { name: 'Load more' }));
+    await user.click(await screen.findByText('A post'));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit bookmark' });
+    const listLoads = api.calls.filter((c) => c.path.startsWith('/bookmarks?')).length;
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+
+    expect(await within(dialog).findByText('Must not be empty')).toBeInTheDocument();
+    expect(screen.getByText('Loose link')).toBeInTheDocument();
+    expect(api.calls.filter((c) => c.path.startsWith('/bookmarks?'))).toHaveLength(listLoads);
+    expect(api.calls.filter((c) => c.path.startsWith('/collections'))).toHaveLength(1);
   });
 
   it('creates a Bookmark from the New dialog and reloads the list', async () => {
@@ -299,6 +346,22 @@ describe('the Bookmark dialog', () => {
     expect(await within(dialog).findByText('Collection not found')).toBeInTheDocument();
   });
 
+  it('shows a failed delete in a Snackbar, closing the confirmation', async () => {
+    api.on('DELETE', `/bookmarks/${post.id}`, () => problem(500));
+    const { router, user } = renderApp(`/bookmarks/${post.id}`);
+
+    const dialog = await screen.findByRole('dialog', { name: 'Edit bookmark' });
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    const confirm = await screen.findByRole('dialog', { name: 'Delete this bookmark?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Delete' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Something went wrong on the server. Try again.',
+    );
+    expect(screen.queryByRole('dialog', { name: 'Delete this bookmark?' })).not.toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(`/bookmarks/${post.id}`);
+  });
+
   it('asks before deleting', async () => {
     api.on('DELETE', `/bookmarks/${post.id}`, () => noContent());
     const { router, user } = renderApp(`/bookmarks/${post.id}`);
@@ -347,6 +410,27 @@ describe('/collections', () => {
     ).toBeInTheDocument();
   });
 
+  it('keeps the loaded pages when a new Collection is rejected', async () => {
+    api.on('GET', '/collections', ({ searchParams }) =>
+      searchParams.get('cursor') === 'next-1' ? page([later]) : page([reading], 'next-1'),
+    );
+    api.on('POST', '/collections', () => problem(409));
+    const { user } = renderApp('/collections');
+
+    await user.click(await screen.findByRole('button', { name: 'Load more' }));
+    await screen.findByText('Later');
+    await user.click(screen.getByRole('button', { name: 'New collection' }));
+    const dialog = await screen.findByRole('dialog', { name: 'New collection' });
+    await user.type(within(dialog).getByLabelText(/Name/), 'reading');
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+
+    expect(
+      await within(dialog).findByText('You already have a Collection with this name'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Later')).toBeInTheDocument();
+    expect(api.calls.filter((c) => c.method === 'GET')).toHaveLength(2);
+  });
+
   it('shows the Collection dialog with its Bookmarks, each linking to the Bookmark', async () => {
     const { router, user } = renderApp(`/collections/${reading.id}`);
 
@@ -370,6 +454,21 @@ describe('/collections', () => {
 
     await waitFor(() => expect(router.state.location.pathname).toBe('/collections'));
     expect(api.calls.some((c) => c.method === 'DELETE')).toBe(true);
+  });
+
+  it('shows a failed delete in a Snackbar, closing the confirmation', async () => {
+    api.on('DELETE', `/collections/${reading.id}`, () => {
+      throw new TypeError('Failed to fetch');
+    });
+    const { user } = renderApp(`/collections/${reading.id}`);
+
+    const dialog = await screen.findByRole('dialog', { name: 'Reading' });
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    const confirm = await screen.findByRole('dialog', { name: 'Delete “Reading”?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Delete' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't reach the server.");
+    expect(screen.queryByRole('dialog', { name: 'Delete “Reading”?' })).not.toBeInTheDocument();
   });
 
   it('renames with PUT', async () => {

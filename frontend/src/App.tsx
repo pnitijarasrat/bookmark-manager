@@ -3,7 +3,8 @@ import { CssBaseline, ThemeProvider } from '@mui/material';
 import { useState } from 'react';
 import { createBrowserRouter, RouterProvider } from 'react-router';
 import { safeReturnTo } from './auth/return-to';
-import { sessionContext, type AuthSession } from './auth/session';
+import { auth0Session } from './auth/auth0-session';
+import { sessionContext } from './auth/session';
 import { config } from './config';
 import { FullPageSpinner } from './layout/FullPageSpinner';
 import { routes } from './routes';
@@ -44,22 +45,23 @@ function AuthRouter() {
 
 function SessionRouter() {
   const { isAuthenticated, getAccessTokenSilently, logout } = useAuth0();
-  // Created once. Signing in always leaves the page, so the only change the
-  // session sees while the router lives is ending, and clearSession records it.
-  const [router] = useState(() => {
-    const session: AuthSession = {
-      isAuthenticated,
-      getAccessToken: async () => {
-        const token = await getAccessTokenSilently();
-        if (!token) throw new Error('No access token');
-        return token;
-      },
-      clearSession: async () => {
-        session.isAuthenticated = false;
-        await logout({ openUrl: false });
-      },
-    };
-    return createBrowserRouter(routes, { getContext: () => sessionContext(session) });
-  });
-  return <RouterProvider router={router} />;
+  // StrictMode calls a state initializer twice, and a router starts loading as
+  // soon as it's made. So the initializer only returns a getter, and just the
+  // kept one makes a router.
+  const [router] = useState(() =>
+    once(() => {
+      const session = auth0Session({
+        isAuthenticated,
+        getAccessTokenSilently: () => getAccessTokenSilently(),
+        logout,
+      });
+      return createBrowserRouter(routes, { getContext: () => sessionContext(session) });
+    }),
+  );
+  return <RouterProvider router={router()} />;
+}
+
+function once<T>(make: () => T): () => T {
+  let value: { made: T } | undefined;
+  return () => (value ??= { made: make() }).made;
 }

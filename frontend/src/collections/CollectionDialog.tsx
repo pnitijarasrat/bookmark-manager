@@ -1,5 +1,4 @@
 import { Box, Button, List, ListItemButton, ListItemText, Typography } from '@mui/material';
-import { useState } from 'react';
 import {
   Form,
   Link,
@@ -11,7 +10,7 @@ import {
   useSubmit,
 } from 'react-router';
 import type { ActionResult } from '../forms/action-result';
-import { ConfirmDialog } from '../forms/ConfirmDialog';
+import { ConfirmDialog, useConfirmation } from '../forms/ConfirmDialog';
 import { FormDialog } from '../forms/FormDialog';
 import type { CollectionData } from './collections.data';
 import { countLabel, NameField } from './CollectionFields';
@@ -27,7 +26,7 @@ export function CollectionDialog() {
   const navigate = useNavigate();
   const submit = useSubmit();
   const { search } = useLocation();
-  const [confirming, setConfirming] = useState(false);
+  const confirmation = useConfirmation(result);
 
   const action = `/collections/${collection.id}${search}`;
   const pendingIntent =
@@ -50,7 +49,7 @@ export function CollectionDialog() {
       }
       actions={
         <>
-          <Button color="error" onClick={() => setConfirming(true)}>
+          <Button color="error" onClick={confirmation.show}>
             Delete
           </Button>
           <Box sx={{ flexGrow: 1 }} />
@@ -81,12 +80,12 @@ export function CollectionDialog() {
         </Typography>
       )}
       <ConfirmDialog
-        open={confirming}
+        open={confirmation.open}
         title={`Delete “${collection.name}”?`}
         message={deleteMessage(collection.bookmarkCount)}
         confirmLabel="Delete"
         pending={pendingIntent === 'delete'}
-        onCancel={() => setConfirming(false)}
+        onCancel={confirmation.hide}
         onConfirm={() => submit({ intent: 'delete' }, { method: 'post', action })}
       />
     </FormDialog>

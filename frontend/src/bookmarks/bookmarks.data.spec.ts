@@ -1,3 +1,5 @@
+import { data as withStatus } from 'react-router';
+import { SessionEndedError } from '../auth/session';
 import { mockApi, noContent, problem, type MockApi } from '../test/mock-api';
 import { aBookmark, aCollection, page } from '../test/fixtures';
 import { dataArgs, fakeSession, thrownBy } from '../test/session';
@@ -73,7 +75,7 @@ describe('bookmarksLoader', () => {
   it('sends an expired session to /login', async () => {
     const session = fakeSession({
       getAccessToken: async () => {
-        throw new Error('login_required');
+        throw new SessionEndedError();
       },
     });
 
@@ -129,10 +131,15 @@ describe('bookmarksAction (create)', () => {
 
     const result = await bookmarksAction(dataArgs('/bookmarks', { form }));
 
-    expect(result).toEqual({
-      ok: false,
-      fieldErrors: { url: 'Must be an http or https URL', title: 'Must not be empty' },
-    });
+    expect(result).toEqual(
+      withStatus(
+        {
+          ok: false,
+          fieldErrors: { url: 'Must be an http or https URL', title: 'Must not be empty' },
+        },
+        { status: 422 },
+      ),
+    );
   });
 
   it('shows "Collection not found" on the picker for a 404', async () => {
@@ -142,10 +149,15 @@ describe('bookmarksAction (create)', () => {
       dataArgs('/bookmarks', { form: { ...form, collectionId: COLLECTION_ID } }),
     );
 
-    expect(result).toEqual({
-      ok: false,
-      fieldErrors: { collectionId: 'Collection not found' },
-    });
+    expect(result).toEqual(
+      withStatus(
+        {
+          ok: false,
+          fieldErrors: { collectionId: 'Collection not found' },
+        },
+        { status: 404 },
+      ),
+    );
   });
 
   it('throws a 404 for an Uncategorised create, which names no Collection', async () => {
@@ -161,11 +173,16 @@ describe('bookmarksAction (create)', () => {
 
     const result = await bookmarksAction(dataArgs('/bookmarks', { form }));
 
-    expect(result).toEqual({
-      ok: false,
-      fieldErrors: {},
-      formError: expect.any(String),
-    });
+    expect(result).toEqual(
+      withStatus(
+        {
+          ok: false,
+          fieldErrors: {},
+          formError: expect.any(String),
+        },
+        { status: 500 },
+      ),
+    );
   });
 
   it('returns a network failure as a form error', async () => {
@@ -175,7 +192,10 @@ describe('bookmarksAction (create)', () => {
 
     const result = await bookmarksAction(dataArgs('/bookmarks', { form }));
 
-    expect(result).toMatchObject({ ok: false, formError: expect.any(String) });
+    expect(result).toMatchObject({
+      data: { ok: false, formError: expect.any(String) },
+      init: { status: 503 },
+    });
   });
 });
 
@@ -250,10 +270,15 @@ describe('bookmarkAction', () => {
 
     const result = await bookmarkAction(args(update));
 
-    expect(result).toEqual({
-      ok: false,
-      fieldErrors: { collectionId: 'Collection not found' },
-    });
+    expect(result).toEqual(
+      withStatus(
+        {
+          ok: false,
+          fieldErrors: { collectionId: 'Collection not found' },
+        },
+        { status: 404 },
+      ),
+    );
   });
 
   it('throws a 404 when the Bookmark itself is not found', async () => {
@@ -281,7 +306,9 @@ describe('bookmarkAction', () => {
 
     const result = await bookmarkAction(args(update));
 
-    expect(result).toEqual({ ok: false, fieldErrors: { title: 'Must not be empty' } });
+    expect(result).toEqual(
+      withStatus({ ok: false, fieldErrors: { title: 'Must not be empty' } }, { status: 422 }),
+    );
   });
 
   it('deletes the Bookmark and goes back to the filtered list', async () => {

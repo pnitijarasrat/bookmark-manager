@@ -10,6 +10,7 @@ import {
   submitting,
   text,
   type ActionResult,
+  type Rejected,
 } from '../forms/action-result';
 
 export const BOOKMARK_FILTERS = ['q', 'collectionId'] as const;
@@ -35,7 +36,7 @@ export async function bookmarksLoader(args: LoaderFunctionArgs): Promise<Bookmar
 }
 
 /** Creates a Bookmark from the "New Bookmark" dialog's fetcher. */
-export async function bookmarksAction(args: ActionFunctionArgs): Promise<ActionResult> {
+export async function bookmarksAction(args: ActionFunctionArgs): Promise<ActionResult | Rejected> {
   const body = bookmarkBody(await args.request.formData());
   return submitting(async () => {
     const { response, error } = await apiFetch(
@@ -47,7 +48,7 @@ export async function bookmarksAction(args: ActionFunctionArgs): Promise<ActionR
     if (response.status === 404) {
       // The only ID a create can name is the Collection's.
       if (body.collectionId === null) throw errorResponse(404);
-      return fieldError('collectionId', COLLECTION_NOT_FOUND);
+      return fieldError('collectionId', COLLECTION_NOT_FOUND, 404);
     }
     return failure(response, error);
   });
@@ -62,7 +63,7 @@ export async function bookmarkLoader(args: LoaderFunctionArgs): Promise<{ bookma
 }
 
 /** Saves (PUT) or deletes the Bookmark in the dialog. */
-export async function bookmarkAction(args: ActionFunctionArgs): Promise<ActionResult | Response> {
+export async function bookmarkAction(args: ActionFunctionArgs): Promise<Rejected | Response> {
   const id = args.params.id!;
   const form = await args.request.formData();
   const path = { params: { path: { id } } };
@@ -83,7 +84,7 @@ export async function bookmarkAction(args: ActionFunctionArgs): Promise<ActionRe
           // goes to the error boundary.
           if (body.collectionId === null) throw errorResponse(404);
           await apiFetch(args, (client) => client.GET('/bookmarks/{id}', path));
-          return fieldError('collectionId', COLLECTION_NOT_FOUND);
+          return fieldError('collectionId', COLLECTION_NOT_FOUND, 404);
         }
         return failure(response, error);
       });
