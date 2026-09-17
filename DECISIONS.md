@@ -709,12 +709,12 @@ From [#11](https://github.com/pnitijarasrat/bookmark-manager/issues/11), built i
     - **Owner B's text:** every title and note says outright that it belongs to B, for example "Owner B only: if you can see this, isolation is broken".
     - **A's large Collection:** about 55 Bookmarks in one Collection, so "Load more" shows up on `/bookmarks` and on that Collection's page. B keeps a small set.
     - **Order:** each row gets its own `createdAt`, one minute apart, so the list order is the same on every run.
-  - **Code:** `backend/prisma/seed.ts` exports `seed(prisma, { ownerA, ownerB })`. A CLI entry point in the same file reads the environment and calls it. The seed runs as `prisma db seed` through `migrations.seed` in `prisma.config.ts`, using Node 24's built-in TypeScript support. If the generated client doesn't work with that, it falls back to a pinned `tsx`.
+  - **Code:** `backend/prisma/seed.ts` exports `seed(prisma, { ownerA, ownerB })`. A CLI entry point in the same file reads the environment and calls it. The seed runs as `prisma db seed` through `migrations.seed` in `prisma.config.ts`, through a pinned `tsx` (4.23.13). Node 24's built-in TypeScript support was tried first, but it can't resolve the generated client's `.js` imports. `whoami` imports no generated code, so it runs on plain `node`.
   - **Runs:**
     - **`npm run dev`** runs the migrations, then `db:seed`, then the apps.
     - **Empty Owners only:** `db:seed` seeds an Owner only if that Owner has no Collections and no Bookmarks. Otherwise it leaves that Owner alone.
     - **`SEED_OWNER_A_SUB` unset:** only B is seeded, and a message explains how to set the variable. A is seeded on the next run after the variable is set.
-  - **Reset:** `npm run db:seed:reset` deletes and re-creates the rows of B, and of A if the variable is set, in one transaction. It touches no other Owner. It refuses to run unless `DATABASE_URL` points at the local Compose database (`localhost:5434`).
+  - **Reset:** `npm run db:seed:reset` deletes and re-creates the rows of B, and of A if the variable is set, in one transaction. It touches no other Owner. It refuses to run unless `DATABASE_URL` points at the local Compose database (`localhost:5434`, or `127.0.0.1:5434`, which is the address Compose binds).
   - **Finding your `sub`:** `npm run whoami --prefix backend -- <token>` decodes an access token locally and prints only its `sub`. It doesn't verify the token. The reviewer copies the token from the `Authorization` header of any API request in the browser's Network tab.
   - **Seeing B's rows:** the README gives a `psql` command, run through `docker compose exec`, that counts rows for each Owner.
 - **Why:**

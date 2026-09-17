@@ -7,7 +7,7 @@
   "scripts": {
     "postinstall": "npm ci --prefix backend && npm ci --prefix frontend",
     "predev": "npm run env:init --prefix backend && npm run env:init --prefix frontend",
-    "dev": "docker compose up -d --wait && npm run db:migrate --prefix backend && concurrently --names api,web --prefix-colors blue,magenta \"npm run start:dev --prefix backend\" \"npm run dev --prefix frontend\"",
+    "dev": "docker compose up -d --wait && npm run db:migrate --prefix backend && npm run db:seed --prefix backend && concurrently --names api,web --prefix-colors blue,magenta \"npm run start:dev --prefix backend\" \"npm run dev --prefix frontend\"",
     "db:down": "docker compose down",
     "lint": "npm run lint --prefix backend && npm run lint --prefix frontend",
     "typecheck": "npm run typecheck --prefix backend && npm run typecheck --prefix frontend",
