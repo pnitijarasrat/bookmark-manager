@@ -674,7 +674,7 @@ Decided in the pre-build grilling session (2026-09-16), tracked in [#1](https://
 - **Decision:** logs go in `transcripts/<YYYY-MM-DD>-<topic>/`, with each session's `.jsonl` next to its `/export` text. Logs are committed as they are, without scrubbing, at the end of each session. (Changed on 2026-09-17: logs used to go through `transcripts/scrub.py` first.)
 - **Why:** the logs are a deliverable, and the owner wants them committed unaltered.
 - **Rejected alternatives:** scrubbing logs with `transcripts/scrub.py`, and redacting them by hand.
-- **Consequences:** this repo is public, so anything in a log is published. `transcripts/scrub.py` is no longer part of the workflow.
+- **Consequences:** this repo is public, so anything in a log is published. `transcripts/scrub.py` was removed.
 
 ---
 
