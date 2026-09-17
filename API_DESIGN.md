@@ -191,8 +191,8 @@ The invariant from the brief (§3) is that a User can never see, change, or lear
    - an `exp` that hasn't passed
    - a non-empty `sub`
 
-   It then puts `sub` on the request. No route can opt out of the guard.
-2. **The Owner is passed along explicitly.** Controllers read it with an `@Owner()` parameter decorator and pass it through services to repositories as the first argument, `method(ownerId, …)`. It's never read from the request body, and a body containing `ownerId` gets a `400`.
+   It then puts `sub` on the request, along with the verified token and its `exp`, which only `/me` reads. No route can opt out of the guard.
+2. **The Owner is passed along explicitly.** Controllers read it with an `@Owner()` parameter decorator and pass it through services to repositories as the first argument, `method(ownerId, …)`. It's never read from the request body, and a body containing `ownerId` gets a `400`. The one route that needs the token itself, `/me`, reads it with `@VerifiedAccessToken()` and sends it only to Auth0's `/userinfo`.
 3. **Only repositories talk to the database.** An ESLint `no-restricted-imports` rule, run in CI, lets only `*.repository.ts` import `PrismaService` or `@prisma/client`. Every repository query filters on `ownerId`.
 4. **Lookups are single, Owner-scoped queries.**
    - **Reads** are one query on `id AND owner_id`.
@@ -203,6 +203,7 @@ The invariant from the brief (§3) is that a User can never see, change, or lear
 6. **The database enforces cross-Owner links too.** The composite foreign key (§3) makes it impossible for a Bookmark to point at another Owner's Collection, even if some code path skips the check.
 7. **Nothing leaks through responses.**
    - `ownerId` is never serialised.
+   - `/me` builds its body field by field from `/userinfo`, so the `sub` Auth0 returns is dropped.
    - IDs are random UUIDv4s, which can't be enumerated.
    - Uniqueness is only ever per Owner, so a `409` says nothing about others.
    - A `500` body carries no database details.

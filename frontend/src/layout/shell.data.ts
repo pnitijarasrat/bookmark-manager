@@ -9,7 +9,8 @@ export interface ShellData {
 /**
  * The layout route's loader: the signed-in email from `/me`. A failure only
  * leaves the email out, so the pages still work, but an ended session still
- * goes to `/login`. See DECISIONS.md, "The app shell".
+ * goes to `/login`. See DECISIONS.md, "/me comes from /userinfo, cached until
+ * the token expires".
  */
 export async function shellLoader(args: LoaderFunctionArgs): Promise<ShellData> {
   try {

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { expectProblem } from './support/api.js';
 import { startApp, type TestApp } from './support/app.js';
 import {
   createIdentityProvider,
@@ -35,18 +36,12 @@ const now = () => Math.floor(Date.now() / 1000);
 
 // Tokens signed in the same second are identical, so each gets its own `jti`
 // to keep one test's cache entry out of the next.
-const fresh = (sub: string, claims: Record<string, unknown> = {}) =>
+const uniqueToken = (sub: string, claims: Record<string, unknown> = {}) =>
   idp.tokenFor(sub, { jti: randomUUID(), ...claims });
-
-async function expectProblem(res: Response, status: number) {
-  expect(res.status).toBe(status);
-  expect(res.headers.get('content-type')).toMatch(/^application\/problem\+json/);
-  return res.json();
-}
 
 describe('GET /me', () => {
   it("returns the caller's email, name and picture, and nothing else", async () => {
-    const res = await api.request('/me', { token: await fresh(OWNER_A) });
+    const res = await api.request('/me', { token: await uniqueToken(OWNER_A) });
 
     expect(res.status).toBe(200);
     const text = await res.text();
@@ -56,7 +51,7 @@ describe('GET /me', () => {
   });
 
   it('calls /userinfo with the caller’s own Bearer token', async () => {
-    const token = await fresh(OWNER_A);
+    const token = await uniqueToken(OWNER_A);
     await api.request('/me', { token });
 
     expect(userinfo).toHaveBeenCalledTimes(1);
@@ -66,13 +61,13 @@ describe('GET /me', () => {
   });
 
   it('answers each token with its own Owner’s profile', async () => {
-    const res = await api.request('/me', { token: await fresh(OWNER_B) });
+    const res = await api.request('/me', { token: await uniqueToken(OWNER_B) });
     expect((await res.json()).email).toBe(profileOf(OWNER_B).email);
   });
 
   it('returns null for each field /userinfo leaves out or sends as a non-string', async () => {
     userinfo.mockResolvedValue(Response.json({ sub: OWNER_A, name: 42 }));
-    const res = await api.request('/me', { token: await fresh(OWNER_A) });
+    const res = await api.request('/me', { token: await uniqueToken(OWNER_A) });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toStrictEqual({ email: null, name: null, picture: null });
@@ -91,7 +86,7 @@ describe('GET /me', () => {
 
 describe('the /userinfo cache', () => {
   it('serves repeat calls with the same token from the cache', async () => {
-    const token = await fresh(OWNER_A);
+    const token = await uniqueToken(OWNER_A);
     const first = await (await api.request('/me', { token })).json();
     const second = await (await api.request('/me', { token })).json();
 
@@ -100,7 +95,7 @@ describe('the /userinfo cache', () => {
   });
 
   it('shares one /userinfo call between concurrent requests with the same token', async () => {
-    const token = await fresh(OWNER_A);
+    const token = await uniqueToken(OWNER_A);
     const responses = await Promise.all([1, 2, 3].map(() => api.request('/me', { token })));
 
     expect(responses.map((res) => res.status)).toEqual([200, 200, 200]);
@@ -108,8 +103,8 @@ describe('the /userinfo cache', () => {
   });
 
   it('calls /userinfo again for a different token of the same Owner', async () => {
-    await api.request('/me', { token: await fresh(OWNER_A) });
-    await api.request('/me', { token: await fresh(OWNER_A) });
+    await api.request('/me', { token: await uniqueToken(OWNER_A) });
+    await api.request('/me', { token: await uniqueToken(OWNER_A) });
 
     expect(userinfo).toHaveBeenCalledTimes(2);
   });
@@ -117,7 +112,7 @@ describe('the /userinfo cache', () => {
   it('keeps an entry only until the token expires', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
-      const token = await fresh(OWNER_A, { exp: now() + 60 });
+      const token = await uniqueToken(OWNER_A, { exp: now() + 60 });
       await api.request('/me', { token });
       // Past `exp`, but within the verifier's clock tolerance, so the token
       // still passes the guard.
@@ -131,7 +126,7 @@ describe('the /userinfo cache', () => {
   });
 
   it('never caches a failure', async () => {
-    const token = await fresh(OWNER_A);
+    const token = await uniqueToken(OWNER_A);
     userinfo.mockResolvedValueOnce(new Response('busy', { status: 503 }));
 
     expect((await api.request('/me', { token })).status).toBe(502);
@@ -148,7 +143,7 @@ describe('a /userinfo failure', () => {
     ['a JSON body that is not an object', () => Response.json(['x'])],
   ])('is a problem+json 502 on %s', async (_, reply) => {
     userinfo.mockImplementation(async () => reply());
-    const res = await api.request('/me', { token: await fresh(OWNER_A) });
+    const res = await api.request('/me', { token: await uniqueToken(OWNER_A) });
 
     expect(await expectProblem(res, 502)).toEqual({
       type: 'about:blank',
@@ -159,7 +154,7 @@ describe('a /userinfo failure', () => {
 
   it('is a problem+json 502 when /userinfo cannot be reached', async () => {
     userinfo.mockRejectedValue(new TypeError('fetch failed: getaddrinfo ENOTFOUND secret-host'));
-    const res = await api.request('/me', { token: await fresh(OWNER_A) });
+    const res = await api.request('/me', { token: await uniqueToken(OWNER_A) });
 
     await expectProblem(res, 502);
     expect(api.logs.join('\n')).not.toContain('secret-host');
@@ -167,13 +162,13 @@ describe('a /userinfo failure', () => {
 
   it('is a problem+json 401 when Auth0 no longer accepts the token', async () => {
     userinfo.mockResolvedValue(new Response('Unauthorized', { status: 401 }));
-    const res = await api.request('/me', { token: await fresh(OWNER_A) });
+    const res = await api.request('/me', { token: await uniqueToken(OWNER_A) });
 
     await expectProblem(res, 401);
   });
 
   it('never logs the token', async () => {
-    const token = await fresh(OWNER_A);
+    const token = await uniqueToken(OWNER_A);
     userinfo.mockResolvedValue(new Response('oops', { status: 500 }));
     await api.request('/me', { token });
 
