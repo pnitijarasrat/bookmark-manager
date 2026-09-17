@@ -1,8 +1,7 @@
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import helmet from 'helmet';
-import { send } from './http/problem.filter.js';
-import { problem } from './http/problem.js';
+import { problem, sendProblem } from './http/problem.js';
 import { requestLogger } from './http/request-logger.js';
 
 // The SPA's origin, fixed by the Auth0 tenant.
@@ -42,5 +41,5 @@ function bodyParseErrorHandler(
     typeof error.status === 'number' && error.status >= 400 && error.status < 500
       ? error.status
       : 500;
-  send(response, status, JSON.stringify(problem(status)));
+  sendProblem(response, problem(status));
 }

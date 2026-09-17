@@ -7,7 +7,7 @@ import {
   type ExceptionFilter,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { NOT_FOUND_BODY, problem, UnprocessableContentException } from './problem.js';
+import { problem, sendProblem, UnprocessableContentException, type Problem } from './problem.js';
 
 /**
  * Turns every error into problem+json. Messages from exceptions are never
@@ -20,26 +20,21 @@ export class ProblemFilter implements ExceptionFilter {
 
   catch(exception: unknown, host: ArgumentsHost) {
     const response = host.switchToHttp().getResponse<Response>();
-    send(response, ...this.toProblem(exception));
+    sendProblem(response, this.toProblem(exception));
   }
 
-  private toProblem(exception: unknown): [number, string] {
+  private toProblem(exception: unknown): Problem {
     if (!(exception instanceof HttpException)) {
       // Only the error's class and code: a message can carry database details.
       const { name, code } = describe(exception);
       this.logger.error(`Unexpected ${name}${code ? ` (${code})` : ''}`);
-      return [HttpStatus.INTERNAL_SERVER_ERROR, JSON.stringify(problem(500))];
+      return problem(HttpStatus.INTERNAL_SERVER_ERROR);
     }
-    const status = exception.getStatus();
-    if (status === HttpStatus.NOT_FOUND) return [status, NOT_FOUND_BODY];
-    const body = problem(status);
+    // Only the status is used, so a 404's message never reaches the body.
+    const body = problem(exception.getStatus());
     if (exception instanceof UnprocessableContentException) body.errors = exception.errors;
-    return [status, JSON.stringify(body)];
+    return body;
   }
-}
-
-export function send(response: Response, status: number, body: string) {
-  response.status(status).type('application/problem+json').send(body);
 }
 
 function describe(exception: unknown): { name: string; code?: string } {

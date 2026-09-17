@@ -1,4 +1,5 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
+import type { Response } from 'express';
 import { STATUS_CODES } from 'node:http';
 
 // application/problem+json bodies (RFC 9457). See API_DESIGN.md §5.
@@ -22,8 +23,13 @@ export function problem(status: number): Problem {
   return { type: 'about:blank', title: TITLES[status] ?? STATUS_CODES[status] ?? 'Error', status };
 }
 
-// Every 404 is exactly this, byte for byte. It never repeats a path or an ID.
-export const NOT_FOUND_BODY = JSON.stringify(problem(HttpStatus.NOT_FOUND));
+/**
+ * Writes a problem+json response. A 404 is always exactly `problem(404)`, byte
+ * for byte, and never repeats a path or an ID.
+ */
+export function sendProblem(response: Response, body: Problem) {
+  response.status(body.status).type('application/problem+json').send(JSON.stringify(body));
+}
 
 /** A 422 that lists each invalid field as a JSON Pointer into the request body. */
 export class UnprocessableContentException extends HttpException {

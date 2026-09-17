@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { orNotFound } from '../prisma/errors.repository.js';
+import { orNotFound } from '../prisma/not-found.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 // A Collection as the API sees it: no ownerId. See API_DESIGN.md §1.

@@ -1,8 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
-import { Prisma } from '../generated/prisma/client.js';
 
-// Shared by the repositories. The `.repository.ts` suffix is what lets it
-// import Prisma (see eslint.config.js).
+// Shared by the repositories. It reads Prisma's error code without importing
+// Prisma, so it needs no exemption from the lint boundary.
 
 // P2025: the Owner-scoped `where` matched no row.
 // P2003: a composite foreign key failed, so the Collection isn't the Owner's.
@@ -17,9 +16,8 @@ export async function orNotFound<T>(query: Promise<T>): Promise<T> {
   try {
     return await query;
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && NOT_FOUND_CODES.has(error.code)) {
-      throw new NotFoundException();
-    }
+    const code = (error as { code?: unknown } | null)?.code;
+    if (typeof code === 'string' && NOT_FOUND_CODES.has(code)) throw new NotFoundException();
     throw error;
   }
 }
