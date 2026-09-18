@@ -1,33 +1,34 @@
 # Bookmark Manager
 
-Dear Reviewer,
-
-This was built the way the assignment asks: I directed it rather than typed it.
-The workflow is in [AI_WORKFLOW.md](AI_WORKFLOW.md) and the unedited sessions are
-in [transcripts/](transcripts/) — please read them, they tell you more about me
-than this README does.
-
-The decisions that are mine: the constant 404 for anything that isn't yours
-(including an empty Collection — no 200s), no User table, no `offline_access` or
-refresh tokens, and the scope cuts under "Skipped, and why". The rest I reviewed
-and accepted from the model.
-
-I'm early, and I want to get good at this quickly. Most of what I know —
-TypeScript, this workflow — I taught myself on my own time from courses and long
-YouTube videos, because I'd rather spend an evening on it than on most hobbies.
-The part I'm working on deliberately now is the judgement to catch the model
-when it's subtly wrong: the transcripts show me doing that twice, and I want it
-to be far more often. That comes from hours and from review by people better
-than me.
-
-I'd rather be judged on whether my review of this work was good. Ask me about
-any decision in [DECISIONS.md](DECISIONS.md) — for the ones I made I'll defend
-them, and for the rest I'll tell you honestly that I took the model's reasoning
-and why I found it convincing. Auth0 and JWT verification I met for the first
-time on this project.
-
-Best regards,
-Puriwat
+> [!NOTE]
+> Dear Reviewer,
+>
+> This was built the way the assignment asks: I directed it rather than typed it.
+> The workflow is in [AI_WORKFLOW.md](AI_WORKFLOW.md) and the unedited sessions are
+> in [transcripts/](transcripts/) — please read them, they tell you more about me
+> than this README does.
+>
+> The decisions that are mine: the constant 404 for anything that isn't yours
+> (including an empty Collection — no 200s), no User table, no `offline_access` or
+> refresh tokens, and the scope cuts under "Skipped, and why". The rest I reviewed
+> and accepted from the model.
+>
+> I'm early, and I want to get good at this quickly. Most of what I know —
+> TypeScript, this workflow — I taught myself on my own time from courses and long
+> YouTube videos, because I'd rather spend an evening on it than on most hobbies.
+> The part I'm working on deliberately now is the judgement to catch the model
+> when it's subtly wrong: the transcripts show me doing that twice, and I want it
+> to be far more often. That comes from hours and from review by people better
+> than me.
+>
+> I'd rather be judged on whether my review of this work was good. Ask me about
+> any decision in [DECISIONS.md](DECISIONS.md) — for the ones I made I'll defend
+> them, and for the rest I'll tell you honestly that I took the model's reasoning
+> and why I found it convincing. Auth0 and JWT verification I met for the first
+> time on this project.
+>
+> Best regards,  
+> Puriwat
 
 A private bookmark manager: every User signs in with Auth0 and sees only their own Collections and Bookmarks. The one invariant the whole design serves is that **a User can never see, change, or learn that another Owner's data exists** — another Owner's resource answers exactly like one that was never there.
 
