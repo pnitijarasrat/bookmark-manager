@@ -671,7 +671,7 @@ Decided in the pre-build grilling session (2026-09-16), tracked in [#1](https://
   - `CLAUDE.md`: the agent rules
   - `DECISIONS.md`, `API_DESIGN.md` and `README.md` at the root
 
-  The brief's `/.agent/` folder is `.claude/`, because that is the only folder Claude Code reads. Any shareable parts it grows (`commands/`, `agents/`, `settings.json`, `.mcp.json`) are committed; so far it holds none, so nothing under it is tracked. `.claude/worktrees/` and `settings.local.json` are ignored.
+  The brief's `/.agent/` folder is `.claude/`, because that is the only folder Claude Code reads. Everything shareable in it is committed, so a clone is enough: `.claude/README.md`, and `.claude/skills/` with the twelve vendored skills and `check-closure.sh`. Anything it grows later (`commands/`, `agents/`, `settings.json`, `.mcp.json`) is committed the same way. `.claude/worktrees/` and `settings.local.json` are ignored.
 - **Why:**
   - **The brief fixes the layout.**
   - **`backend/` and `frontend/` are separate packages** with no shared code. The API contract reaches the SPA through the generated OpenAPI spec (see [API types are generated from OpenAPI](#api-types-are-generated-from-openapi)).

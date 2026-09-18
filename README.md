@@ -114,7 +114,7 @@ The tests worth looking at first:
 | `backend/test/repositories.spec.ts` | Every repository method, called with the wrong Owner. |
 | `frontend/src/routes.spec.tsx` | The route guard, the dialogs, filters and "Load more" against a mocked API. |
 
-CI (`.github/workflows/ci.yml`) runs lint, typecheck, the OpenAPI spec check, the generated-types check, the frontend build and the full test suite on every push and PR.
+CI (`.github/workflows/ci.yml`) runs lint, typecheck, the OpenAPI spec check, the generated-types check, the frontend build and the full test suite on every pull request and on every push to `main`.
 
 ## What I completed vs skipped
 

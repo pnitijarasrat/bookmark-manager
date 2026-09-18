@@ -4,7 +4,7 @@ This is the contract for the bookmark manager API. The reasons behind it are in 
 
 - **Base URL:** `http://localhost:3001`. The SPA calls it from `http://localhost:3000`.
 - **Auth:** every route requires `Authorization: Bearer <Auth0 access token>`, and there are no public routes. A missing or invalid token gets a `401`. The token's `sub` is the caller's **Owner**.
-- **Format:** request and response bodies are JSON. Errors are `application/problem+json` (see [Errors](#errors)).
+- **Format:** request and response bodies are JSON. Errors are `application/problem+json` (see [Errors](#5-errors)).
 - **Spec:** the OpenAPI spec is generated with `@nestjs/swagger` and its CLI plugin, and committed as [`backend/openapi.json`](backend/openapi.json). `npm run openapi` in `backend/` regenerates it, and CI runs `npm run openapi:check`, which fails if it's out of date. The SPA's types are generated from it.
 
 ---
