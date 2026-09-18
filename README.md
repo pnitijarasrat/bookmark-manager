@@ -2,10 +2,10 @@
 
 Dear Reviewer,
 
-I should say up front how this was built: I directed it, I didn't type it. The
-workflow is in [AI_WORKFLOW.md](AI_WORKFLOW.md) and the unedited sessions are in
-[transcripts/](transcripts/) — please read them, they tell you more about me than
-this README does.
+This was built the way the assignment asks: I directed it rather than typed it.
+The workflow is in [AI_WORKFLOW.md](AI_WORKFLOW.md) and the unedited sessions are
+in [transcripts/](transcripts/) — please read them, they tell you more about me
+than this README does.
 
 The decisions that are mine: the constant 404 for anything that isn't yours
 (including an empty Collection — no 200s), no User table, no `offline_access` or
@@ -20,12 +20,10 @@ catch the model when it's subtly wrong: the transcripts show me doing that twice
 and I want it to be far more often. That comes from hours and from review by
 people better than me, and I'm glad to put in the first and ask for the second.
 
-So if you're looking for experience, I understand moving on. If you're looking
-for someone to train, I'd rather be judged on whether my review of this work was
-good than on whether I typed the lines. Ask me about any decision in
-[DECISIONS.md](DECISIONS.md) — for the ones I made I'll defend them, and for the
-rest I'll tell you honestly that I took the model's reasoning and why I found it
-convincing. Auth0 and JWT verification I met for the first time on this project.
+I'd rather be judged on whether my review of this work was good than on whether
+I typed the lines. Ask me about any decision in [DECISIONS.md](DECISIONS.md) —
+for the ones I made I'll defend them, and for the rest I'll tell you honestly
+that I took the model's reasoning and why I found it convincing. Auth0 and JWT verification I met for the first time on this project.
 
 Best regards,
 Puriwat
