@@ -16,7 +16,7 @@
 > I'm early, and I want to get good at this quickly. Most of what I know —
 > TypeScript, and this workflow — I taught myself on my own time from courses
 > and long YouTube videos, because I'd rather spend an evening on it than on
-> most hobbies. The part I'm working on deliberately now is the judgement to
+> most hobbies, now I want to make it a career. The part I'm working on deliberately now is the judgement to
 > catch the model when it's subtly wrong: the transcripts show me doing that
 > twice, and I want it to be far more often. That comes from hours and from
 > review by people better than me.
