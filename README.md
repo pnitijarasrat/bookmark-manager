@@ -1,5 +1,33 @@
 # Bookmark Manager
 
+Dear Reviewer,
+
+I should say up front how this was built: I directed it, I didn't type it. The
+workflow is in [AI_WORKFLOW.md](AI_WORKFLOW.md) and the unedited sessions are in
+[transcripts/](transcripts/) — please read them, they tell you more about me than
+this README does.
+
+The decisions that are mine: the constant 404 for anything that isn't yours
+(including an empty Collection — no 200s), no User table, no `offline_access` or
+refresh tokens, and the scope cuts under "Skipped, and why". The rest I reviewed
+and accepted from the model.
+
+I'm early. Most of what I know — TypeScript, the auth model, this workflow — I
+learned on my own time from courses and long YouTube videos, because I enjoy it
+more than I'd enjoy most hobbies. What I'm still building is the judgement to
+catch the model when it's subtly wrong. The transcripts show me doing that twice;
+I want it to be far more often.
+
+So if you're looking for experience, I understand moving on. If you're looking
+for someone to train, I'd rather be judged on whether my review of this work was
+good than on whether I typed the lines. Ask me about any decision in
+[DECISIONS.md](DECISIONS.md) — for the ones I made I'll defend them, and for the
+rest I'll tell you honestly that I took the model's reasoning and why I found it
+convincing. Auth0 and JWT verification I met for the first time on this project.
+
+Best regards,
+Puriwat
+
 A private bookmark manager: every User signs in with Auth0 and sees only their own Collections and Bookmarks. The one invariant the whole design serves is that **a User can never see, change, or learn that another Owner's data exists** — another Owner's resource answers exactly like one that was never there.
 
 - A NestJS API (`backend/`, port 3001) that verifies an Auth0 access token on every route and scopes every query to the token's `sub`.
