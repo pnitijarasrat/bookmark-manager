@@ -12,11 +12,13 @@ The decisions that are mine: the constant 404 for anything that isn't yours
 refresh tokens, and the scope cuts under "Skipped, and why". The rest I reviewed
 and accepted from the model.
 
-I'm early. Most of what I know — TypeScript, the auth model, this workflow — I
-learned on my own time from courses and long YouTube videos, because I enjoy it
-more than I'd enjoy most hobbies. What I'm still building is the judgement to
-catch the model when it's subtly wrong. The transcripts show me doing that twice;
-I want it to be far more often.
+I'm early, and I want to get good at this quickly. Most of what I know —
+TypeScript, the auth model, this workflow — I taught myself on my own time from
+courses and long YouTube videos, because I'd rather spend an evening on it than
+on most hobbies. The part I'm working on deliberately now is the judgement to
+catch the model when it's subtly wrong: the transcripts show me doing that twice,
+and I want it to be far more often. That comes from hours and from review by
+people better than me, and I'm glad to put in the first and ask for the second.
 
 So if you're looking for experience, I understand moving on. If you're looking
 for someone to train, I'd rather be judged on whether my review of this work was
