@@ -7,18 +7,21 @@ plugin installs.
 ```
 .claude/
 ├── README.md       this file
-├── skills/         nine vendored skills, MIT, see its README
+├── skills/         twelve vendored skills, MIT, see its README
 └── worktrees/      scratch, git-ignored
 ```
 
 ## Skills
 
-`skills/` holds nine of Matt Pocock's skills, vendored from the
-`mattpocock-skills` plugin at v1.2.3. Six are invoked directly (`wayfinder`,
-`grilling`, `grill-me`, `to-spec`, `to-tickets`, `code-review`) and three are
-there because `wayfinder` delegates to them by name (`research`, `prototype`,
-`domain-modeling`). The dependency closure is closed and there is a one-liner in
-`skills/README.md` to re-verify it.
+`skills/` holds twelve of Matt Pocock's skills, vendored from the
+`mattpocock-skills` plugin at v1.2.3. Seven are invoked directly (`wayfinder`,
+`grilling`, `grill-me`, `to-spec`, `to-tickets`, `implement`, `code-review`).
+The other five are there because a skill above delegates to them by name, and
+would otherwise dead-end mid-run: `tdd`, `codebase-design`, `research`,
+`prototype`, `domain-modeling`.
+
+Run `./.claude/skills/check-closure.sh` after adding or removing a skill; it
+exits non-zero if a delegation dangles.
 
 Skills are discovered by directory name, so the upstream
 `engineering/`–`productivity/` grouping is flattened. Provenance, licence,

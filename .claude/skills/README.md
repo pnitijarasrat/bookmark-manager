@@ -12,30 +12,54 @@ depending on each machine having the plugin installed.
 | `grill-me` | User-invoked entry point to `grilling`. |
 | `to-spec` | Turn a resolved discussion into a spec. |
 | `to-tickets` | Break a spec into tracker tickets with blocking edges. |
+| `implement` | Build the work a spec or set of tickets describes. |
 | `code-review` | Review changes since a fixed point on Standards and Spec axes. |
 
 ## Pulled in as dependencies
 
-`wayfinder` delegates to these by name, so they are vendored too; without them
-its research, prototype and conversation steps dead-end.
+These are here because a skill above delegates to them by name. Without them,
+the delegating skill dead-ends mid-run.
 
 | Skill | Delegated from |
 | --- | --- |
+| `tdd` | `implement` ("use /tdd where possible, at pre-agreed seams") |
+| `codebase-design` | `tdd`, for the module/seam/depth vocabulary when an interface shape is in question |
 | `research` | `wayfinder` (AFK tickets, resolved in parallel subagents) |
 | `prototype` | `wayfinder` (raise fidelity with a cheap artifact) |
 | `domain-modeling` | `wayfinder`, alongside `grilling`, on every conversation ticket |
 
-The dependency closure is closed: every skill these nine name by name is present
-in this directory. Re-check with
+Note that `implement` also delegates to `code-review`, which is already above.
+
+## Checking the closure
+
+Run from the repo root:
 
 ```sh
-grep -ohE 'Skill tool (twice, )?(for|with) "[a-z-]+"' .claude/skills/*/SKILL.md \
-  | grep -oE '"[a-z-]+"' | sort -u
+./.claude/skills/check-closure.sh
 ```
+
+It reports any skill a vendored `SKILL.md` names but that isn't present, and
+exits non-zero. **Run it after adding or removing a skill here** — a dangling
+delegation doesn't fail loudly, it just leaves a skill that stops halfway.
+
+The check reads both syntaxes skills use to call each other, `Skill tool with
+"tdd"` and `/tdd`. An earlier version only caught the first, which is how
+`implement` initially got vendored without `tdd` or `codebase-design`.
+
+### The one deliberate exception
+
+`setup-matt-pocock-skills` is named by `to-spec`, `to-tickets`, `code-review`
+and `wayfinder`, and is **not** vendored. It is a one-time setup skill, it has
+already been run against this repo, and its output is committed at
+`docs/agents/`. The references are all "if those docs are missing, run
+`/setup-matt-pocock-skills`" fallbacks, which don't fire because the docs exist.
+It is allowlisted in the check script, with that reasoning inline.
 
 ## Repo docs these skills read
 
-- `to-spec`, `to-tickets`, `code-review` → `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`
+- `to-spec`, `to-tickets`, `code-review`, `wayfinder` → `docs/agents/issue-tracker.md`
+- `to-spec`, `to-tickets` → `docs/agents/triage-labels.md`
+- the engineering skills, before exploring → `docs/agents/domain.md`
 - `domain-modeling`, `wayfinder` → `CONTEXT.md`, `docs/adr/`
 
 Those stay at their documented paths because the skills reference them there
@@ -56,12 +80,14 @@ to fix a bug; fix it upstream and re-vendor, or the next refresh reverts it.
 Upstream groups skills under `skills/engineering/` and `skills/productivity/`;
 that grouping is flattened here because Claude Code discovers a skill by its
 directory name under `.claude/skills/`. Each skill is a `SKILL.md` plus an
-`agents/openai.yaml` for Codex-style harnesses, kept as-is.
+`agents/openai.yaml` for Codex-style harnesses, kept as-is. Some carry extra
+reference files (`tdd/tests.md`, `tdd/mocking.md`, `prototype/UI.md`,
+`domain-modeling/ADR-FORMAT.md` and so on), copied whole.
 
 ## Refreshing
 
-Re-copy each skill directory from upstream `skills/*/`, then update the version,
-commit and date above and re-run the closure check.
+Re-copy each skill directory from upstream `skills/*/`, update the version,
+commit and date above, then run the closure check.
 
 ## Name collision
 
