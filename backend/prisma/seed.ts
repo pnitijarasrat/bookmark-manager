@@ -8,7 +8,7 @@ import { PrismaClient, type Prisma } from '../src/generated/prisma/client.js';
 //
 // Owner A is the tenant's test user, from SEED_OWNER_A_SUB. Owner B can never
 // sign in: B's rows exist to show what A must never see. To count each
-// Owner's rows (the README from #23 will carry this too):
+// Owner's rows (the README carries this too):
 //
 //   docker compose exec postgres psql -U bookmarks -d bookmarks -c "SELECT owner_id,
 //     (SELECT count(*) FROM collections c WHERE c.owner_id = o.owner_id) AS collections,

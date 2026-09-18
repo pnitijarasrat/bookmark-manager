@@ -671,7 +671,7 @@ Decided in the pre-build grilling session (2026-09-16), tracked in [#1](https://
   - `CLAUDE.md`: the agent rules
   - `DECISIONS.md`, `API_DESIGN.md` and `README.md` at the root
 
-  The brief's `/.agent/` folder is `.claude/`, because that is the only folder Claude Code reads. Its shareable parts (`commands/`, `agents/`, `settings.json`, `.mcp.json`) are committed. `.claude/worktrees/` and `settings.local.json` are ignored.
+  The brief's `/.agent/` folder is `.claude/`, because that is the only folder Claude Code reads. Any shareable parts it grows (`commands/`, `agents/`, `settings.json`, `.mcp.json`) are committed; so far it holds none, so nothing under it is tracked. `.claude/worktrees/` and `settings.local.json` are ignored.
 - **Why:**
   - **The brief fixes the layout.**
   - **`backend/` and `frontend/` are separate packages** with no shared code. The API contract reaches the SPA through the generated OpenAPI spec (see [API types are generated from OpenAPI](#api-types-are-generated-from-openapi)).
@@ -685,7 +685,7 @@ Decided in the pre-build grilling session (2026-09-16), tracked in [#1](https://
 - **Decision:**
   - **Database:** `docker-compose.yml` runs Postgres 17 as Compose project `bbl-bookmarks`, on host port `5434` (bound to `127.0.0.1`), so it doesn't clash with other local Postgres instances on 5432 or 5433.
   - **Start:** the root `package.json` holds only scripts. `npm run dev` starts Postgres, runs the Prisma migrations and the seed, then starts `backend` (`:3001`) and `frontend` (`:3000`) together with `concurrently`.
-  - **Install:** `npm install` at the root copies `backend/.env.example` to `backend/.env` if it's missing, then installs the backend.
+  - **Install:** `npm install` at the root runs `npm ci` in `backend/` and in `frontend/`, and generates the Prisma client. Each app's own `postinstall` copies its `.env.example` to `.env` if it's missing (`npm run env:init`), and `predev` does the same before `npm run dev`, so a fresh clone starts with both apps configured.
   - **Config:** each app has a committed `.env.example`, and real `.env` files are ignored. The backend's example values are the public tenant facts and the Compose database, so they work as they are. The API validates its config at startup and refuses to start if a value is missing or malformed.
   - **Node:** 24 LTS, pinned with `.nvmrc` and `engines`.
 - **Why:**
@@ -716,7 +716,7 @@ From [#11](https://github.com/pnitijarasrat/bookmark-manager/issues/11), built i
     - **`SEED_OWNER_A_SUB` unset:** only B is seeded, and a message explains how to set the variable. A is seeded on the next run after the variable is set.
   - **Reset:** `npm run db:seed:reset` deletes and re-creates the rows of B, and of A if the variable is set, in one transaction. It touches no other Owner. It refuses to run unless `DATABASE_URL` points at the local Compose database (`localhost:5434`, or `127.0.0.1:5434`, which is the address Compose binds).
   - **Finding your `sub`:** `npm run whoami --prefix backend -- <token>` decodes an access token locally and prints only its `sub`. It doesn't verify the token. The reviewer copies the token from the `Authorization` header of any API request in the browser's Network tab.
-  - **Seeing B's rows:** a `psql` command, run through `docker compose exec`, counts rows for each Owner. Until the README lands in [#23](https://github.com/pnitijarasrat/bookmark-manager/issues/23), it lives in the header comment of `backend/prisma/seed.ts`.
+  - **Seeing B's rows:** a `psql` command, run through `docker compose exec`, counts rows for each Owner. It's in the README and in the header comment of `backend/prisma/seed.ts`.
   - **Overlapping runs:** each run takes a per-Owner advisory lock (`pg_advisory_xact_lock`) inside its transaction, so two runs started together take turns. The second then sees the first's rows and leaves that Owner alone, instead of failing on the unique Collection name and stopping `npm run dev`.
 - **Why:**
   - **Only one Owner can sign in.** Sign-up is disabled, and the tenant has one test user (see [Universal Login with existing database users](#universal-login-with-existing-database-users-no-offline_access)). B exists to show, in the database, that data A must never see is really there.
@@ -741,10 +741,12 @@ From [#11](https://github.com/pnitijarasrat/bookmark-manager/issues/11), built i
 
 ### Transcripts
 
-- **Decision:** logs go in `transcripts/<YYYY-MM-DD>-<topic>/`, with each session's `.jsonl` next to its `/export` text. Logs are committed as they are, without scrubbing, at the end of each session. (Changed on 2026-09-17: logs used to go through `transcripts/scrub.py` first.)
+- **Decision:** logs go in `transcripts/<YYYY-MM-DD>-<topic>/export/`, one `/export` text file per session. The `.jsonl` session files aren't committed. Logs are committed as they are, without scrubbing, at the end of each session. (Changed on 2026-09-17: logs used to go through `transcripts/scrub.py` first. Changed on 2026-09-18: the `.jsonl` files were never committed, so the decision now says the `/export` text alone.)
 - **Why:** the logs are a deliverable, and the owner wants them committed unaltered.
-- **Rejected alternatives:** scrubbing logs with `transcripts/scrub.py`, and redacting them by hand.
-- **Consequences:** this repo is public, so anything in a log is published. `transcripts/scrub.py` was removed.
+- **Rejected alternatives:** scrubbing logs with `transcripts/scrub.py`, and redacting them by hand. Committing the `.jsonl` files as well: the `/export` text is the readable deliverable, and the `.jsonl` only repeats it in a form no reviewer reads.
+- **Consequences:**
+  - This repo is public, so anything in a log is published. `transcripts/scrub.py` was removed.
+  - The two earliest folders (`2026-09-16-planning` and `2026-09-17-slice-1-backend-skeleton`) spell the subfolder `exports/`. They're left as they are, because logs are committed unaltered.
 
 ---
 
