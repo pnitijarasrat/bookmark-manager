@@ -13,15 +13,14 @@ refresh tokens, and the scope cuts under "Skipped, and why". The rest I reviewed
 and accepted from the model.
 
 I'm early, and I want to get good at this quickly. Most of what I know —
-TypeScript, the auth model, this workflow — I taught myself on my own time from
+TypeScript, this workflow — I taught myself on my own time from
 courses and long YouTube videos, because I'd rather spend an evening on it than
 on most hobbies. The part I'm working on deliberately now is the judgement to
 catch the model when it's subtly wrong: the transcripts show me doing that twice,
 and I want it to be far more often. That comes from hours and from review by
-people better than me, and I'm glad to put in the first and ask for the second.
+people better than me.
 
-I'd rather be judged on whether my review of this work was good than on whether
-I typed the lines. Ask me about any decision in [DECISIONS.md](DECISIONS.md) —
+I'd rather be judged on whether my review of this work was good. Ask me about any decision in [DECISIONS.md](DECISIONS.md) —
 for the ones I made I'll defend them, and for the rest I'll tell you honestly
 that I took the model's reasoning and why I found it convincing. Auth0 and JWT verification I met for the first time on this project.
 
